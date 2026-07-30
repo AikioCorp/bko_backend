@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Environnement / secrets
+.env
+.env.*
+!.env.example
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# Prisma (client généré)
+node_modules/.prisma/
+
+# Logs & divers
+*.log
+npm-debug.log*
+scratch/
+.DS_Store
+Thumbs.db
