@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { MarketService } from "./market.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
+import { prisma } from "../../config/prisma.js";
 
 export class MarketController {
   // --- ENDPOINTS PUBLICS ---
@@ -18,8 +19,11 @@ export class MarketController {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
       const { countryCode } = req.body;
-      const profile = await req.user.id; // Obtenir profil créateur
-      const access = await MarketService.requestBetaAccess(profile, countryCode);
+      const creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId: req.user.id } });
+      if (!creatorProfile) {
+        return sendError(res, "Profil créateur non trouvé. Veuillez d'abord créer un profil créateur.", "CREATOR_PROFILE_NOT_FOUND", 404);
+      }
+      const access = await MarketService.requestBetaAccess(creatorProfile.id, countryCode);
       return sendSuccess(res, access, null, 201);
     } catch (error: any) {
       return sendError(res, error.message);
@@ -89,10 +93,17 @@ export class MarketController {
 
   static async updateCreatorAccess(req: AuthenticatedRequest, res: Response) {
     try {
-      const { status } = req.body;
-      const updated = await MarketService.updateCreatorAccess(req.params.id, status, req.user?.id);
+      const { status, canCreatePodcast, canPublish, canUpload, canImportRss, canMonetize } = req.body;
+      const updated = await MarketService.updateCreatorAccess(
+        req.params.id,
+        { status, canCreatePodcast, canPublish, canUpload, canImportRss, canMonetize },
+        req.user?.id
+      );
       return sendSuccess(res, updated);
     } catch (error: any) {
+      if (error.message === "CREATOR_ACCESS_NOT_FOUND") {
+        return sendError(res, "Accès créateur introuvable", "CREATOR_ACCESS_NOT_FOUND", 404);
+      }
       return sendError(res, error.message);
     }
   }

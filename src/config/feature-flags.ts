@@ -11,6 +11,13 @@ export class FeatureFlags {
     return process.env.ENABLE_TRANSCRIPTION !== "false";
   }
 
+  // Exige qu'un compte soit vérifié (OTP) avant de pouvoir se connecter.
+  // Désactivé par défaut : le flux client (web) n'implémente pas encore l'étape de
+  // vérification OTP. À activer (REQUIRE_VERIFIED_LOGIN=true) une fois cette étape en place.
+  static get requireVerifiedLogin(): boolean {
+    return process.env.REQUIRE_VERIFIED_LOGIN === "true";
+  }
+
   static checkUploadsEnabled(): void {
     if (!this.enableUploads) {
       throw new Error("FEATURE_DISABLED_UPLOADS: L'upload natif de médias est temporairement désactivé par l'administration.");

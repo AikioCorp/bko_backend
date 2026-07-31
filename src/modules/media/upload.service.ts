@@ -1,6 +1,9 @@
 import { prisma } from "../../config/prisma.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
+import { MarketAccessService } from "../../services/market-access.service.js";
 import { MediaType } from "@prisma/client";
+
+const CREATOR_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 Go par créateur
 
 const MAX_AUDIO_BYTES = 250 * 1024 * 1024; // 250 Mo
 const MAX_VIDEO_BYTES = 2000 * 1024 * 1024; // 2 Go
@@ -20,6 +23,41 @@ export class UploadService {
     }
   ) {
     const { originalFilename, mimeType, sizeBytes, mediaType, episodeId } = params;
+
+    // 0. Contexte marché + propriété.
+    //    - Si l'upload cible un épisode : l'utilisateur doit être membre (hors ANALYST)
+    //      du podcast de cet épisode (protection IDOR), et le marché de référence est
+    //      le pays de ce podcast.
+    //    - Sinon : le marché de référence est le pays du profil créateur.
+    const creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId } });
+    let countryCode = creatorProfile?.countryId ?? null;
+
+    if (episodeId) {
+      const episode = await prisma.episode.findUnique({
+        where: { id: episodeId },
+        include: { podcast: { select: { id: true, countryId: true } } },
+      });
+      if (!episode) {
+        throw new Error("EPISODE_NOT_FOUND");
+      }
+      const member = await prisma.podcastMember.findUnique({
+        where: { podcastId_userId: { podcastId: episode.podcast.id, userId } },
+      });
+      if (!member || member.role === "ANALYST") {
+        throw new Error("FORBIDDEN");
+      }
+      countryCode = episode.podcast.countryId;
+    }
+
+    if (!countryCode) {
+      // Sans contexte marché, on ne peut pas évaluer les capacités : refus par défaut.
+      throw new Error("MARKET_UPLOAD_DISABLED");
+    }
+
+    const canUpload = await MarketAccessService.canUpload(countryCode, creatorProfile?.id);
+    if (!canUpload) {
+      throw new Error("MARKET_UPLOAD_DISABLED");
+    }
 
     // 1. Validation du MIME Type
     const isAudio = mediaType === "AUDIO" && ALLOWED_AUDIO_MIMES.includes(mimeType);
@@ -43,7 +81,7 @@ export class UploadService {
       _sum: { sizeBytes: true },
     });
     const totalUsed = Number(usage._sum.sizeBytes || 0);
-    if (totalUsed + sizeBytes > 10 * 1024 * 1024 * 1024) {
+    if (totalUsed + sizeBytes > CREATOR_QUOTA_BYTES) {
       throw new Error("QUOTA_EXCEEDED");
     }
 
@@ -100,7 +138,30 @@ export class UploadService {
       throw new Error("OBJECT_NOT_FOUND_IN_STORAGE");
     }
 
-    // 1. Créer le MediaAsset en statut PROCESSING
+    // Réconciliation de la taille RÉELLE stockée (la taille déclarée par le client à la
+    // création de session n'est pas fiable : l'URL présignée n'impose pas de Content-Length).
+    // On vérifie le quota contre la taille effective ; en cas de dépassement, on rejette et
+    // on purge l'objet pour ne pas conserver un fichier hors quota.
+    const metadata = await storage.getMetadata(session.storageKey);
+    const realSize = metadata?.sizeBytes ?? session.sizeBytes;
+
+    const usage = await prisma.mediaAsset.aggregate({
+      where: { ownerId: userId, status: { not: "DELETED" } },
+      _sum: { sizeBytes: true },
+    });
+    const totalUsed = BigInt(usage._sum.sizeBytes ?? 0);
+    if (totalUsed + realSize > BigInt(CREATOR_QUOTA_BYTES)) {
+      await Promise.all([
+        storage.deleteObject(session.storageKey).catch(() => {}),
+        prisma.uploadSession.update({
+          where: { id: uploadSessionId },
+          data: { status: "FAILED" },
+        }),
+      ]);
+      throw new Error("QUOTA_EXCEEDED");
+    }
+
+    // 1. Créer le MediaAsset en statut PROCESSING (avec la taille réelle)
     const mediaAsset = await prisma.mediaAsset.create({
       data: {
         ownerId: userId,
@@ -109,7 +170,7 @@ export class UploadService {
         bucket: process.env.R2_BUCKET_MEDIA || "bamako-podcast-media",
         key: session.storageKey,
         mimeType: session.mimeType,
-        sizeBytes: session.sizeBytes,
+        sizeBytes: realSize,
         status: "PROCESSING",
       },
     });

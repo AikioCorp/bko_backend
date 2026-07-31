@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma.js";
+import { formatEpisodeWithMediaFlags } from "../../utils/episode.js";
 
 export class PodcastService {
   static async getPodcasts(params: {
@@ -80,6 +81,13 @@ export class PodcastService {
             person: true,
           },
         },
+        episodes: {
+          where: { status: "PUBLISHED" },
+          orderBy: { publishedAt: "desc" },
+          include: {
+            mediaSources: true,
+          },
+        },
         _count: {
           select: { episodes: true, followers: true },
         },
@@ -95,8 +103,13 @@ export class PodcastService {
       nextCursor = nextItem?.id || null;
     }
 
+    const formattedPodcasts = podcasts.map((p) => ({
+      ...p,
+      episodes: (p.episodes || []).map(formatEpisodeWithMediaFlags),
+    }));
+
     return {
-      data: podcasts,
+      data: formattedPodcasts,
       pagination: {
         nextCursor,
         hasMore,
@@ -155,6 +168,11 @@ export class PodcastService {
       },
     });
 
-    return podcast;
+    if (!podcast) return null;
+
+    return {
+      ...podcast,
+      episodes: podcast.episodes.map(formatEpisodeWithMediaFlags),
+    };
   }
 }

@@ -2,9 +2,10 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../config/prisma.js";
+import { JWT_SECRET } from "../../config/jwt.js";
+import { FeatureFlags } from "../../config/feature-flags.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "bamako-podcast-super-secret-jwt-key-2026";
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "bamako-podcast-super-secret-refresh-key-2026";
+const BCRYPT_ROUNDS = 12;
 
 export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -19,7 +20,12 @@ export class AuthService {
   }) {
     const { email, password, fullName, phoneNumber } = params;
 
-    // Vérifier unicité email & téléphone
+    // Réponse générique volontairement identique que le compte existe ou non
+    // (anti-énumération : on ne révèle jamais si un email/téléphone est déjà inscrit).
+    const genericMessage = "Si ces informations sont valides, un code de vérification a été envoyé.";
+    const otpCode = crypto.randomInt(100000, 1000000).toString(); // OTP 6 chiffres cryptographiquement sûr
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Expiration 15 min
+
     const existingUser = await prisma.user.findFirst({
       where: {
         OR: [{ email }, ...(phoneNumber ? [{ phoneNumber }] : [])],
@@ -27,23 +33,30 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new Error("EMAIL_ALREADY_EXISTS");
+      // Compte non vérifié : on régénère un OTP (renvoi). Compte déjà vérifié : on ne fait
+      // rien. Dans les deux cas, la réponse renvoyée est strictement identique.
+      if (!existingUser.isVerified) {
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: { otpCode: hashToken(otpCode), otpExpiresAt },
+        });
+        return { email, message: genericMessage, ...(process.env.NODE_ENV === "development" ? { otpCode } : {}) };
+      }
+      return { email, message: genericMessage };
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // Code OTP 6 chiffres
-
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const roleUser = await prisma.role.findUnique({ where: { name: "USER" } });
 
-    const user = await prisma.user.create({
+    await prisma.user.create({
       data: {
         email,
         phoneNumber,
         fullName,
         passwordHash,
         isVerified: false,
-        otpCode,
-        otpExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // Expiration 15 mins
+        otpCode: hashToken(otpCode), // OTP stocké haché, jamais en clair
+        otpExpiresAt,
         ...(roleUser
           ? {
               userRoles: {
@@ -57,16 +70,16 @@ export class AuthService {
     });
 
     return {
-      userId: user.id,
-      email: user.email,
-      otpCode, // À envoyer par SMS / Email
+      email,
+      message: genericMessage,
+      ...(process.env.NODE_ENV === "development" ? { otpCode } : {}),
     };
   }
 
   static async verifyOtp(params: { email: string; otpCode: string }) {
     const user = await prisma.user.findUnique({ where: { email: params.email } });
 
-    if (!user || user.otpCode !== params.otpCode) {
+    if (!user || !user.otpCode || user.otpCode !== hashToken(params.otpCode)) {
       throw new Error("INVALID_CREDENTIALS");
     }
 
@@ -87,16 +100,28 @@ export class AuthService {
   }
 
   static async login(params: {
-    identifier: string; // Email ou Téléphone
+    identifier: string; // Email, Username ou Téléphone
     password: string;
     deviceType?: string;
     deviceName?: string;
     ipAddress?: string;
     userAgent?: string;
   }) {
+    const input = params.identifier.trim();
+    const phoneVariants = [input];
+    if (!input.startsWith("+")) {
+      phoneVariants.push(`+223${input}`);
+    } else if (input.startsWith("+223")) {
+      phoneVariants.push(input.replace("+223", ""));
+    }
+
     const user = await prisma.user.findFirst({
       where: {
-        OR: [{ email: params.identifier }, { phoneNumber: params.identifier }],
+        OR: [
+          { email: { equals: input, mode: "insensitive" } },
+          { username: { equals: input, mode: "insensitive" } },
+          { phoneNumber: { in: phoneVariants } },
+        ],
       },
       include: {
         userRoles: {
@@ -112,6 +137,12 @@ export class AuthService {
     const isMatch = await bcrypt.compare(params.password, user.passwordHash);
     if (!isMatch) {
       throw new Error("INVALID_CREDENTIALS");
+    }
+
+    // Le compte doit avoir été vérifié par OTP avant de pouvoir se connecter
+    // (uniquement si la fonctionnalité est activée — cf. FeatureFlags.requireVerifiedLogin).
+    if (FeatureFlags.requireVerifiedLogin && !user.isVerified) {
+      throw new Error("ACCOUNT_NOT_VERIFIED");
     }
 
     const roles = user.userRoles.map((ur) => ur.role.name);
@@ -189,7 +220,18 @@ export class AuthService {
       },
     });
 
-    if (!storedToken || storedToken.isRevoked || storedToken.expiresAt < new Date()) {
+    if (!storedToken) {
+      throw new Error("INVALID_REFRESH_TOKEN");
+    }
+
+    // Rejeu d'un token DÉJÀ révoqué (donc déjà utilisé) : signal probable de vol de token.
+    // On invalide toute la famille de sessions de l'utilisateur par précaution.
+    if (storedToken.isRevoked) {
+      await AuthService.logoutAllDevices(storedToken.userId);
+      throw new Error("INVALID_REFRESH_TOKEN");
+    }
+
+    if (storedToken.expiresAt < new Date()) {
       throw new Error("INVALID_REFRESH_TOKEN");
     }
 

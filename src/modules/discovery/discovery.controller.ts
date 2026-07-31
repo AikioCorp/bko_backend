@@ -14,8 +14,9 @@ export class DiscoveryController {
 
   static async getHome(req: Request, res: Response) {
     try {
+      const country = (req.query.country as string) || "all";
       const sections = await DiscoveryService.getHomeSections();
-      const trending = await DiscoveryService.getTrendingPodcasts(10, "ML");
+      const trending = await DiscoveryService.getTrendingPodcasts(60, country);
 
       return sendSuccess(res, {
         sections,

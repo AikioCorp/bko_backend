@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma.js";
+import { formatEpisodeWithMediaFlags } from "../../utils/episode.js";
 
 export class DiscoveryService {
   static async getExploreData() {
@@ -34,11 +35,11 @@ export class DiscoveryService {
    * Calcul Déterministe des Tendances (Trending Algorithm)
    * Score = (WeightDate * 0.4) + (RecentPlays * 2) + (QualifiedPlays * 3) + (Followers * 5)
    */
-  static async getTrendingPodcasts(limit = 10, countryId = "ML") {
+  static async getTrendingPodcasts(limit = 50, countryId?: string) {
     const podcasts = await prisma.podcast.findMany({
       where: {
         status: "PUBLISHED",
-        ...(countryId ? { countryId } : {}),
+        ...(countryId && countryId !== "all" ? { countryId } : {}),
       },
       include: {
         country: true,
@@ -123,8 +124,16 @@ export class DiscoveryService {
       },
     });
 
-    // Masquer automatiquement les sections vides
-    const activeSections = sections.filter((s) => s.items && s.items.length > 0);
+    // Masquer automatiquement les sections vides et formater les épisodes
+    const activeSections = sections
+      .filter((s) => s.items && s.items.length > 0)
+      .map((s) => ({
+        ...s,
+        items: s.items.map((item) => ({
+          ...item,
+          episode: item.episode ? formatEpisodeWithMediaFlags(item.episode) : null,
+        })),
+      }));
 
     return activeSections;
   }

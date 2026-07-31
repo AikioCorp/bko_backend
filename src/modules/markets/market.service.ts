@@ -113,29 +113,72 @@ export class MarketService {
     });
   }
 
-  static async updateCreatorAccess(accessId: string, status: CreatorMarketAccessStatus, grantedById?: string) {
+  static async updateCreatorAccess(
+    accessId: string,
+    input: {
+      status?: CreatorMarketAccessStatus;
+      canCreatePodcast?: boolean;
+      canPublish?: boolean;
+      canUpload?: boolean;
+      canImportRss?: boolean;
+      canMonetize?: boolean;
+    },
+    grantedById?: string
+  ) {
     const previous = await prisma.creatorMarketAccess.findUnique({ where: { id: accessId } });
+    if (!previous) {
+      throw new Error("CREATOR_ACCESS_NOT_FOUND");
+    }
+
+    const CAPABILITIES = ["canCreatePodcast", "canPublish", "canUpload", "canImportRss", "canMonetize"] as const;
+
+    // Construction du patch à partir des seuls champs réellement fournis.
+    const data: Record<string, unknown> = {};
+    if (input.status !== undefined) {
+      data.status = input.status;
+      data.grantedById = grantedById;
+      data.grantedAt = input.status === "APPROVED" ? new Date() : undefined;
+    }
+    for (const cap of CAPABILITIES) {
+      if (input[cap] !== undefined) data[cap] = input[cap];
+    }
 
     const updated = await prisma.creatorMarketAccess.update({
       where: { id: accessId },
-      data: {
-        status,
-        grantedById,
-        grantedAt: status === "APPROVED" ? new Date() : undefined,
-      },
+      data,
     });
 
-    // Journalisation d'audit selon spécification 5.5.1
-    const auditAction = status === "APPROVED" ? "CREATOR_MARKET_CAPABILITY_GRANTED" : "CREATOR_MARKET_CAPABILITY_REVOKED";
+    // Journalisation d'audit PAR capacité modifiée (spécification 5.5.1) :
+    // admin, creator, market, capability, ancienne valeur, nouvelle valeur.
+    for (const cap of CAPABILITIES) {
+      if (input[cap] !== undefined && previous[cap] !== input[cap]) {
+        await AuditService.logAction({
+          actorId: grantedById,
+          action: input[cap] ? "CREATOR_MARKET_CAPABILITY_GRANTED" : "CREATOR_MARKET_CAPABILITY_REVOKED",
+          entityType: "CreatorMarketAccess",
+          entityId: accessId,
+          previousState: {
+            creatorProfileId: previous.creatorProfileId,
+            marketId: previous.marketId,
+            capability: cap,
+            value: previous[cap],
+          },
+          newState: { capability: cap, value: input[cap] },
+        });
+      }
+    }
 
-    await AuditService.logAction({
-      actorId: grantedById,
-      action: auditAction,
-      entityType: "CreatorMarketAccess",
-      entityId: accessId,
-      previousState: previous,
-      newState: updated,
-    });
+    // Journalisation du changement de statut d'accès (APPROVED / REJECTED / ...).
+    if (input.status !== undefined && previous.status !== input.status) {
+      await AuditService.logAction({
+        actorId: grantedById,
+        action: "CREATOR_MARKET_ACCESS_STATUS_CHANGED",
+        entityType: "CreatorMarketAccess",
+        entityId: accessId,
+        previousState: { status: previous.status },
+        newState: { status: input.status },
+      });
+    }
 
     return updated;
   }

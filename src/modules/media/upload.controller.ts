@@ -19,6 +19,15 @@ export class UploadController {
       if (error.message === "QUOTA_EXCEEDED") {
         return sendError(res, "Quota de stockage créateur dépassé (10 Go)", "QUOTA_EXCEEDED", 403);
       }
+      if (error.message === "EPISODE_NOT_FOUND") {
+        return sendError(res, "Épisode introuvable", "EPISODE_NOT_FOUND", 404);
+      }
+      if (error.message === "FORBIDDEN") {
+        return sendError(res, "Vous n'avez pas les droits sur cet épisode", "FORBIDDEN", 403);
+      }
+      if (error.message === "MARKET_UPLOAD_DISABLED") {
+        return sendError(res, "L'upload natif n'est pas autorisé pour votre marché", "MARKET_UPLOAD_DISABLED", 403);
+      }
       return sendError(res, error.message);
     }
   }
@@ -29,6 +38,12 @@ export class UploadController {
       const result = await UploadService.completeUploadSession(req.user.id, req.params.id);
       return sendSuccess(res, result);
     } catch (error: any) {
+      if (error.message === "QUOTA_EXCEEDED") {
+        return sendError(res, "Quota de stockage créateur dépassé (10 Go)", "QUOTA_EXCEEDED", 403);
+      }
+      if (error.message === "SESSION_NOT_FOUND") {
+        return sendError(res, "Session d'upload introuvable", "SESSION_NOT_FOUND", 404);
+      }
       return sendError(res, error.message);
     }
   }

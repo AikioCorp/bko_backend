@@ -17,9 +17,26 @@ import { CollectionController } from "../../modules/collections/collection.contr
 import { ClaimController } from "../../modules/claims/claim.controller.js";
 import { TranscriptController } from "../../modules/transcripts/transcript.controller.js";
 import { authenticateToken, optionalAuthenticateToken, requireAdmin } from "../../middlewares/auth.middleware.js";
+import rateLimit from "express-rate-limit";
 import { prisma } from "../../config/prisma.js";
 
 const router = Router();
+
+// Rate-limiter strict pour les routes sensibles d'authentification (anti brute-force
+// login / OTP). Bien plus serré que le limiteur global. Clé par IP.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === "production" ? 10 : 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "TOO_MANY_AUTH_ATTEMPTS",
+      message: "Trop de tentatives. Réessayez dans quelques minutes.",
+    },
+  },
+});
 
 // Healthchecks
 router.get("/health", (req, res) => {
@@ -35,10 +52,10 @@ router.get("/health/worker", (req, res) => {
 });
 
 // --- AUTHENTIFICATION ---
-router.post("/auth/register", AuthController.register);
-router.post("/auth/verify-otp", AuthController.verifyOtp);
-router.post("/auth/login", AuthController.login);
-router.post("/auth/refresh", AuthController.refreshToken);
+router.post("/auth/register", authLimiter, AuthController.register);
+router.post("/auth/verify-otp", authLimiter, AuthController.verifyOtp);
+router.post("/auth/login", authLimiter, AuthController.login);
+router.post("/auth/refresh", authLimiter, AuthController.refreshToken);
 router.post("/auth/logout", AuthController.logout);
 router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevices);
 

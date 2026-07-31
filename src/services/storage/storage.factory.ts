@@ -15,6 +15,13 @@ export class StorageFactory {
       if (hasR2Creds) {
         this.instance = new CloudflareR2StorageProvider();
       } else {
+        // Garde-fou : le stockage simulé ne doit JAMAIS être actif en production
+        // (sinon les uploads "réussissent" sans être réellement stockés).
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            "FATAL: Aucun identifiant R2 configuré en production. Le stockage simulé est interdit hors développement."
+          );
+        }
         this.instance = new LocalMockStorageProvider();
       }
     }

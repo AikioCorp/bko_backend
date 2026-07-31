@@ -25,12 +25,15 @@ export class MarketAccessService {
       return false;
     }
 
-    // 1. Si le marché est ACTIVE et la capacité globale est activée
+    // 1. Marché ACTIVE : la capacité globale s'applique à tous les créateurs éligibles.
     if (market.status === "ACTIVE" && market[marketCapability] === true) {
       return true;
     }
 
-    // 2. Si le créateur possède une autorisation individuelle approuvée (CreatorMarketAccess)
+    // 2. Sinon (ex. CREATOR_BETA, ou capacité globale désactivée) : SEUL un override
+    //    individuel APPROUVÉ accorde la capacité. On ne retombe jamais sur la capacité
+    //    globale du marché — sans quoi un marché en bêta accorderait implicitement la
+    //    capacité à tout le monde (cf. Verticale 5.5.1).
     if (creatorProfileId) {
       const creatorCapability = CAPABILITY_MAP[marketCapability];
       const access = await prisma.creatorMarketAccess.findUnique({
@@ -47,8 +50,7 @@ export class MarketAccessService {
       }
     }
 
-    // Fallback : Vérifier la capacité globale si non nulle
-    return market[marketCapability] === true;
+    return false;
   }
 
   static async canCreatePodcast(countryCode: string, creatorProfileId?: string): Promise<boolean> {

@@ -70,10 +70,28 @@ export class TranscriptWorkerService {
     const transcript = await prisma.transcript.findUnique({ where: { id: transcriptId } });
     if (!transcript) return;
 
+    const episode = await prisma.episode.findUnique({
+      where: { id: episodeId },
+      include: {
+        mediaSources: {
+          include: { mediaAsset: true },
+        },
+      },
+    });
+
+    const primaryMedia = episode?.mediaSources.find((m) => m.isPrimaryAudio) || episode?.mediaSources[0];
+    const mediaUrl =
+      primaryMedia?.externalUrl ||
+      (primaryMedia?.mediaAsset ? `https://${primaryMedia.mediaAsset.bucket}.r2.cloudflarestorage.com/${primaryMedia.mediaAsset.key}` : null);
+
+    if (!mediaUrl) {
+      throw new Error("EPISODE_AUDIO_NOT_FOUND: L'épisode ou son fichier audio est introuvable pour la transcription.");
+    }
+
     const provider = this.getProvider();
 
     try {
-      const { externalJobId } = await provider.submit("https://bamakopodcast.studio/media.mp3", languageCode);
+      const { externalJobId } = await provider.submit(mediaUrl, languageCode);
       const result = await provider.getStatus(externalJobId);
 
       await prisma.$transaction(async (tx) => {

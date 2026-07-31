@@ -57,6 +57,9 @@ export class AuthController {
 
       return sendSuccess(res, result);
     } catch (error: any) {
+      if (error.message === "ACCOUNT_NOT_VERIFIED") {
+        return sendError(res, "Compte non vérifié. Veuillez confirmer le code OTP envoyé.", "ACCOUNT_NOT_VERIFIED", 403);
+      }
       return sendError(res, "Identifiants incorrects", "INVALID_CREDENTIALS", 401);
     }
   }
