@@ -4,14 +4,37 @@ import net from "net";
 export class SsrfProtectionService {
   private static isPrivateIp(ip: string): boolean {
     if (net.isIPv4(ip)) {
-      const parts = ip.split(".").map(Number);
-      if (parts[0] === 127 || parts[0] === 10) return true; // Loopback & Private Class A
-      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // Private Class B
-      if (parts[0] === 192 && parts[1] === 168) return true; // Private Class C
-      if (parts[0] === 169 && parts[1] === 254) return true; // Link-local / Cloud Metadata (169.254.169.254)
-      if (parts[0] === 0) return true;
-    } else if (net.isIPv6(ip)) {
-      if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc00:") || ip.startsWith("fd00:")) return true;
+      const [a, b] = ip.split(".").map(Number);
+      return (
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
+        (a === 100 && b >= 64 && b <= 127) || // CGNAT
+        (a === 169 && b === 254) || // link-local / metadata cloud
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 192 && b === 0) ||
+        (a === 198 && (b === 18 || b === 19)) ||
+        a >= 224 // multicast / réservé
+      );
+    }
+    if (net.isIPv6(ip)) {
+      const lower = ip.toLowerCase();
+      if (lower === "::" || lower === "::1") return true;
+      // IPv4 mappée / compatible (::ffff:a.b.c.d ou ::ffff:xxxx:xxxx)
+      const mapped = lower.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
+      if (mapped) return this.isPrivateIp(mapped[1]);
+      const hex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (hex) {
+        const hi = parseInt(hex[1], 16);
+        const lo = parseInt(hex[2], 16);
+        return this.isPrivateIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+      }
+      if (lower.startsWith("64:ff9b:")) return true; // NAT64
+      const first = parseInt(lower.split(":")[0] || "0", 16);
+      if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
+      if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 (link-local)
+      if ((first & 0xff00) === 0xff00) return true; // multicast
     }
     return false;
   }
@@ -101,7 +124,23 @@ export class SsrfProtectionService {
           throw new Error("RSS_TOO_LARGE");
         }
 
-        const text = await response.text();
+        // Lecture bornée (10 Mo) même sans en-tête content-length.
+        const reader = response.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.length;
+            if (received > 10 * 1024 * 1024) {
+              await reader.cancel();
+              throw new Error("RSS_TOO_LARGE");
+            }
+            chunks.push(value);
+          }
+        }
+        const text = Buffer.concat(chunks).toString("utf-8");
         return {
           text,
           status: response.status,

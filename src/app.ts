@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import routesV1 from "./routes/v1/index.js";
+import { PermissionService } from "./services/permission.service.js";
 
 dotenv.config();
 
@@ -81,6 +82,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 if (process.env.NODE_ENV !== "test") {
+  // Synchronise le catalogue de permissions et les rôles système (idempotent).
+  PermissionService.bootstrap().catch((e) => console.error("RBAC bootstrap impossible (migration appliquée ?) :", e.message));
   app.listen(PORT, () => {
     console.log(`🚀 Serveur Bko_backend démarré sur http://localhost:${PORT}`);
   });

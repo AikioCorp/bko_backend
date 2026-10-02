@@ -1,3 +1,6 @@
+import { ViewerService } from "../interactions/viewer.service.js";
+import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
+import { formatEpisodeWithMediaFlags } from "../../utils/episode.js";
 import { Request, Response } from "express";
 import { EpisodeService } from "./episode.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
@@ -12,7 +15,9 @@ export class EpisodeController {
         return sendError(res, "Épisode introuvable", "EPISODE_NOT_FOUND", 404);
       }
 
-      return sendSuccess(res, episode);
+      const userId = (req as AuthenticatedRequest).user?.id;
+      const viewer = userId ? await ViewerService.forEpisode(userId, episode.id, episode.podcastId) : null;
+      return sendSuccess(res, { ...formatEpisodeWithMediaFlags(episode), viewer });
     } catch (error: any) {
       return sendError(res, error.message || "Erreur lors de la récupération de l'épisode.");
     }

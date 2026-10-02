@@ -4,6 +4,7 @@ import { CreatorPodcastService } from "./creator-podcast.service.js";
 import { CreatorEpisodeService } from "./creator-episode.service.js";
 import { PodcastTeamService } from "./podcast-team.service.js";
 import { CreatorDashboardService } from "./creator-dashboard.service.js";
+import { creatorError } from "../../utils/creator-errors.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 
@@ -15,7 +16,7 @@ export class CreatorController {
       const profile = await CreatorProfileService.getProfile(req.user.id);
       return sendSuccess(res, profile);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -28,7 +29,7 @@ export class CreatorController {
       if (error.message === "CREATOR_PROFILE_EXISTS") {
         return sendError(res, "Vous possédez déjà un profil créateur", "CONFLICT", 409);
       }
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -38,7 +39,7 @@ export class CreatorController {
       const profile = await CreatorProfileService.updateProfile(req.user.id, req.body);
       return sendSuccess(res, profile);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -58,7 +59,7 @@ export class CreatorController {
       const metrics = await CreatorDashboardService.getDashboardMetrics(req.user.id);
       return sendSuccess(res, metrics);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -69,7 +70,7 @@ export class CreatorController {
       const podcasts = await CreatorPodcastService.listCreatorPodcasts(req.user.id);
       return sendSuccess(res, podcasts);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -79,7 +80,7 @@ export class CreatorController {
       const podcast = await CreatorPodcastService.getPodcastById(req.user.id, req.params.id);
       return sendSuccess(res, podcast);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -89,7 +90,7 @@ export class CreatorController {
       const podcast = await CreatorPodcastService.createPodcast(req.user.id, req.body);
       return sendSuccess(res, podcast, null, 201);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -99,7 +100,7 @@ export class CreatorController {
       const podcast = await CreatorPodcastService.updatePodcast(req.user.id, req.params.id, req.body);
       return sendSuccess(res, podcast);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -109,7 +110,7 @@ export class CreatorController {
       const result = await CreatorPodcastService.archivePodcast(req.user.id, req.params.id);
       return sendSuccess(res, result);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -124,7 +125,7 @@ export class CreatorController {
       );
       return sendSuccess(res, episodes);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -134,7 +135,7 @@ export class CreatorController {
       const episode = await CreatorEpisodeService.createEpisode(req.user.id, req.params.podcastId, req.body);
       return sendSuccess(res, episode, null, 201);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -144,7 +145,7 @@ export class CreatorController {
       const source = await CreatorEpisodeService.addMediaSource(req.user.id, req.params.episodeId, req.body);
       return sendSuccess(res, source, null, 201);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -157,7 +158,7 @@ export class CreatorController {
       if (error.message === "VALIDATION_ERROR_NO_MEDIA_SOURCE") {
         return sendError(res, "Au moins une source média est requise avant publication", "VALIDATION_ERROR", 400);
       }
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -168,7 +169,7 @@ export class CreatorController {
       const episode = await CreatorEpisodeService.scheduleEpisode(req.user.id, req.params.episodeId, publishAt);
       return sendSuccess(res, episode);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -179,7 +180,7 @@ export class CreatorController {
       const members = await PodcastTeamService.getMembers(req.user.id, req.params.id);
       return sendSuccess(res, members);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 
@@ -190,7 +191,7 @@ export class CreatorController {
       const invitation = await PodcastTeamService.createInvitation(req.user.id, req.params.id, email, role);
       return sendSuccess(res, invitation, null, 201);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return creatorError(res, error);
     }
   }
 }

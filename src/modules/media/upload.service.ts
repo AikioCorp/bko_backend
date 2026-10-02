@@ -11,6 +11,17 @@ const MAX_VIDEO_BYTES = 2000 * 1024 * 1024; // 2 Go
 const ALLOWED_AUDIO_MIMES = ["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav"];
 const ALLOWED_VIDEO_MIMES = ["video/mp4", "video/quicktime"];
 
+// L'extension de la clé de stockage est déduite du MIME validé, jamais du nom client.
+const EXT_BY_MIME: Record<string, string> = {
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+};
+
 export class UploadService {
   static async createUploadSession(
     userId: string,
@@ -90,7 +101,7 @@ export class UploadService {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const assetId = `asset_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    const ext = originalFilename.split(".").pop() || (mediaType === "AUDIO" ? "mp3" : "mp4");
+    const ext = EXT_BY_MIME[mimeType] ?? (mediaType === "AUDIO" ? "mp3" : "mp4");
     const storageKey = `media/${userId}/${year}/${month}/${assetId}/original.${ext}`;
 
     const storage = StorageFactory.getProvider();
@@ -125,6 +136,18 @@ export class UploadService {
     });
 
     if (!session || session.userId !== userId) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    // Idempotence : une session déjà complétée ne recrée ni asset ni job.
+    if (session.status === "COMPLETED" && session.mediaAssetId) {
+      return {
+        mediaAssetId: session.mediaAssetId,
+        status: "PROCESSING",
+        message: "Upload déjà complété.",
+      };
+    }
+    if (session.status !== "UPLOADING") {
       throw new Error("SESSION_NOT_FOUND");
     }
 

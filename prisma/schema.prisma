@@ -1,7 +1,6 @@
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -14,6 +13,7 @@ generator client {
 
 enum PodcastStatus {
   DRAFT
+  PENDING_REVIEW
   PUBLISHED
   UNLISTED
   ARCHIVED
@@ -22,6 +22,7 @@ enum PodcastStatus {
 
 enum EpisodeStatus {
   DRAFT
+  PENDING_REVIEW
   PROCESSING
   SCHEDULED
   PUBLISHED
@@ -267,14 +268,17 @@ enum JobStatus {
 // ======================================================
 
 model User {
-  id           String  @id @default(cuid())
-  email        String  @unique
-  username     String? @unique
-  phoneNumber  String? @unique
-  passwordHash String?
-  fullName     String
-  avatar       String?
-  isVerified   Boolean @default(false)
+  id              String    @id @default(cuid())
+  email           String    @unique
+  username        String?   @unique
+  phoneNumber     String?   @unique
+  passwordHash    String?
+  fullName        String
+  avatar          String?
+  isVerified      Boolean   @default(false)
+  isSuspended     Boolean   @default(false)
+  suspendedAt     DateTime?
+  suspendedReason String?
 
   // Jetons de vérification & OTP
   emailVerificationToken String?
@@ -292,6 +296,7 @@ model User {
   orgMemberships     OrganizationMember[]
   invitationsSent    PodcastInvitation[]  @relation("UserInvitationsSent")
   uploadSessions     UploadSession[]
+  notifications      Notification[]
 
   // Media Assets owned / uploaded
   ownedAssets    MediaAsset[] @relation("MediaAssetOwner")
@@ -326,6 +331,8 @@ model Role {
   id              String           @id @default(cuid())
   name            String           @unique
   description     String?
+  isSystem        Boolean          @default(false)
+  presetApplied   Boolean          @default(false)
   rolePermissions RolePermission[]
   userRoles       UserRole[]
 }
@@ -574,6 +581,9 @@ model Podcast {
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
   status                 PodcastStatus          @default(PUBLISHED)
+  reviewNote             String?                @db.Text
+  reviewedAt             DateTime?
+  reviewedById           String?
   ownershipStatus        PodcastOwnershipStatus @default(UNCLAIMED)
   creationSource         CreationSource         @default(ADMIN)
   managedByBamakoPodcast Boolean                @default(false)
@@ -711,6 +721,9 @@ model Episode {
   durationSeconds  Int            @default(0)
   publishedAt      DateTime?
   status           EpisodeStatus  @default(PUBLISHED)
+  reviewNote       String?        @db.Text
+  reviewedAt       DateTime?
+  reviewedById     String?
   creationSource   CreationSource @default(CREATOR)
   isManuallyEdited Boolean        @default(false)
 
@@ -1312,6 +1325,14 @@ model Report {
   description String?
   status      ReportStatus     @default(OPEN)
   createdAt   DateTime         @default(now())
+
+  // Traitement par la modération
+  resolvedById   String?
+  resolvedAt     DateTime?
+  resolutionNote String?   @db.Text
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
 }
 
 model AuditLog {
@@ -1329,4 +1350,19 @@ model AuditLog {
   @@index([actorId])
   @@index([action])
   @@index([entityType, entityId])
+}
+
+// Notifications dans l'application (cloche du site, du studio et de la console).
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // ex. EPISODE_APPROVED, EPISODE_REJECTED, NEW_EPISODE, MEDIA_FAILED…
+  title     String
+  body      String?   @db.Text
+  link      String? // chemin interne du site (ex. /studio/episodes/xxx/edit)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
 }

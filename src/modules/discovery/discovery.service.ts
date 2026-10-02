@@ -95,8 +95,15 @@ export class DiscoveryService {
    * Sections dynamiques de l'Accueil (Ne retourne jamais de section vide)
    */
   static async getHomeSections() {
+    const now = new Date();
     const sections = await prisma.editorialSection.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        AND: [
+          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+        ],
+      },
       orderBy: { position: "asc" },
       include: {
         items: {
@@ -129,11 +136,19 @@ export class DiscoveryService {
       .filter((s) => s.items && s.items.length > 0)
       .map((s) => ({
         ...s,
-        items: s.items.map((item) => ({
-          ...item,
-          episode: item.episode ? formatEpisodeWithMediaFlags(item.episode) : null,
-        })),
-      }));
+        items: s.items
+          .map((item) => ({
+            ...item,
+            episode: item.episode ? formatEpisodeWithMediaFlags(item.episode) : null,
+          }))
+          // Un élément éditorial dont le podcast/épisode n'est plus publié disparaît de l'accueil.
+          .filter((item) => {
+            if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
+            if (item.episode && (item.episode.status !== "PUBLISHED" || item.episode.podcast.status !== "PUBLISHED")) return false;
+            return !!(item.podcast || item.episode || item.person || item.collection || item.topic);
+          }),
+      }))
+      .filter((s) => s.items.length > 0);
 
     return activeSections;
   }

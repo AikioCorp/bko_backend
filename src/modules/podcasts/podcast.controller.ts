@@ -1,3 +1,5 @@
+import { ViewerService } from "../interactions/viewer.service.js";
+import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { Request, Response } from "express";
 import { PodcastService } from "./podcast.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
@@ -38,7 +40,9 @@ export class PodcastController {
         return sendError(res, "Podcast introuvable", "PODCAST_NOT_FOUND", 404);
       }
 
-      return sendSuccess(res, podcast);
+      const userId = (req as AuthenticatedRequest).user?.id;
+      const viewer = userId ? await ViewerService.forPodcast(userId, podcast.id, podcast.episodes.map((e: any) => e.id)) : null;
+      return sendSuccess(res, { ...podcast, viewer });
     } catch (error: any) {
       return sendError(res, error.message || "Erreur lors de la récupération du podcast.");
     }

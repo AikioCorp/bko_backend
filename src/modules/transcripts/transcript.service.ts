@@ -9,6 +9,7 @@ export class TranscriptService {
         episodeId,
         visibility: "PUBLIC",
         status: "READY",
+        episode: { status: "PUBLISHED" }, // jamais la transcription d'un brouillon
       },
       include: {
         segments: { orderBy: { position: "asc" } },
@@ -22,7 +23,7 @@ export class TranscriptService {
 
   static async getChapters(episodeId: string) {
     return prisma.episodeChapter.findMany({
-      where: { episodeId },
+      where: { episodeId, episode: { status: "PUBLISHED" } },
       orderBy: { position: "asc" },
     });
   }
@@ -32,7 +33,7 @@ export class TranscriptService {
 
     const segments = await prisma.transcriptSegment.findMany({
       where: {
-        transcript: { episodeId, visibility: "PUBLIC", status: "READY" },
+        transcript: { episodeId, visibility: "PUBLIC", status: "READY", episode: { status: "PUBLISHED" } },
         text: { contains: query.trim(), mode: "insensitive" },
       },
       orderBy: { startTimeMs: "asc" },

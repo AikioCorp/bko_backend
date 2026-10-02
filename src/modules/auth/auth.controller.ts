@@ -10,6 +10,12 @@ export class AuthController {
       if (!email || !password || !fullName) {
         return sendError(res, "Email, mot de passe et nom complet requis", "VALIDATION_ERROR", 400);
       }
+      if (typeof password !== "string" || password.length < 8 || password.length > 72) {
+        return sendError(res, "Le mot de passe doit contenir entre 8 et 72 caractères", "VALIDATION_ERROR", 400);
+      }
+      if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+        return sendError(res, "Adresse email invalide", "VALIDATION_ERROR", 400);
+      }
 
       const result = await AuthService.register({ email, password, fullName, phoneNumber });
       return sendSuccess(res, result, null, 201);
@@ -18,6 +24,35 @@ export class AuthController {
         return sendError(res, "Cet email ou numéro de téléphone est déjà utilisé", "EMAIL_ALREADY_EXISTS", 409);
       }
       return sendError(res, error.message || "Erreur lors de l'inscription");
+    }
+  }
+
+  static async forgotPassword(req: Request, res: Response) {
+    try {
+      const email = String(req.body?.email ?? "").trim();
+      if (!email.includes("@") || email.length > 254) {
+        return sendError(res, "Adresse email invalide", "VALIDATION_ERROR", 400);
+      }
+      return sendSuccess(res, await AuthService.forgotPassword(email));
+    } catch (error: any) {
+      console.error("[auth] forgotPassword", error);
+      return sendError(res, "Une erreur inattendue est survenue.");
+    }
+  }
+
+  static async resetPassword(req: Request, res: Response) {
+    try {
+      const token = String(req.body?.token ?? "");
+      const password = String(req.body?.password ?? "");
+      if (token.length < 20 || token.length > 200) return sendError(res, "Lien invalide ou expiré", "RESET_TOKEN_INVALID", 400);
+      if (password.length < 8 || password.length > 72) {
+        return sendError(res, "Le mot de passe doit contenir entre 8 et 72 caractères", "VALIDATION_ERROR", 400);
+      }
+      return sendSuccess(res, await AuthService.resetPassword(token, password));
+    } catch (error: any) {
+      if (error.message === "RESET_TOKEN_INVALID") return sendError(res, "Lien invalide ou expiré", "RESET_TOKEN_INVALID", 400);
+      console.error("[auth] resetPassword", error);
+      return sendError(res, "Une erreur inattendue est survenue.");
     }
   }
 

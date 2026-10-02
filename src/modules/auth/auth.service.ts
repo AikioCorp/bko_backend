@@ -4,6 +4,9 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../../config/prisma.js";
 import { JWT_SECRET } from "../../config/jwt.js";
 import { FeatureFlags } from "../../config/feature-flags.js";
+import { MailService } from "../../services/mail/mail.service.js";
+import { Emails } from "../../services/mail/email-templates.js";
+import { NotificationService } from "../../services/notification.service.js";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -40,6 +43,8 @@ export class AuthService {
           where: { id: existingUser.id },
           data: { otpCode: hashToken(otpCode), otpExpiresAt },
         });
+        // Envoi sans attendre : le temps de réponse ne doit pas révéler si le compte existe.
+        void MailService.sendNow(Emails.otp(existingUser.email, otpCode));
         return { email, message: genericMessage, ...(process.env.NODE_ENV === "development" ? { otpCode } : {}) };
       }
       return { email, message: genericMessage };
@@ -69,11 +74,50 @@ export class AuthService {
       },
     });
 
+    void MailService.sendNow(Emails.otp(email, otpCode));
     return {
       email,
       message: genericMessage,
       ...(process.env.NODE_ENV === "development" ? { otpCode } : {}),
     };
+  }
+
+  /** Demande de réinitialisation : réponse identique que le compte existe ou non (anti-énumération). */
+  static async forgotPassword(email: string) {
+    const user = await prisma.user.findFirst({ where: { email: { equals: email.trim(), mode: "insensitive" } } });
+    if (user && user.passwordHash && !user.isSuspended) {
+      const token = crypto.randomBytes(32).toString("hex");
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordResetToken: hashToken(token), passwordResetExpiresAt: new Date(Date.now() + 60 * 60 * 1000) },
+      });
+      void MailService.sendNow(Emails.resetPassword(user.email, token));
+    }
+    return { message: "Si un compte correspond à cette adresse, un email de réinitialisation vient d'être envoyé." };
+  }
+
+  static async resetPassword(token: string, newPassword: string) {
+    const user = await prisma.user.findFirst({
+      where: { passwordResetToken: hashToken(token), passwordResetExpiresAt: { gt: new Date() } },
+    });
+    if (!user) throw new Error("RESET_TOKEN_INVALID");
+
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash, passwordResetToken: null, passwordResetExpiresAt: null },
+      }),
+      // Toutes les sessions existantes sont coupées : un éventuel intrus perd son accès.
+      prisma.refreshToken.updateMany({ where: { userId: user.id }, data: { isRevoked: true } }),
+      prisma.session.deleteMany({ where: { userId: user.id } }),
+    ]);
+    await NotificationService.notify(
+      [user.id],
+      { type: "PASSWORD_CHANGED", title: "Votre mot de passe a été modifié", body: "Si ce n'était pas vous, réinitialisez-le immédiatement et contactez le support." },
+      { email: true }
+    );
+    return { message: "Mot de passe modifié. Vous pouvez vous connecter." };
   }
 
   static async verifyOtp(params: { email: string; otpCode: string }) {
@@ -136,6 +180,10 @@ export class AuthService {
 
     const isMatch = await bcrypt.compare(params.password, user.passwordHash);
     if (!isMatch) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    if (user.isSuspended) {
       throw new Error("INVALID_CREDENTIALS");
     }
 
@@ -231,7 +279,7 @@ export class AuthService {
       throw new Error("INVALID_REFRESH_TOKEN");
     }
 
-    if (storedToken.expiresAt < new Date()) {
+    if (storedToken.expiresAt < new Date() || storedToken.user.isSuspended) {
       throw new Error("INVALID_REFRESH_TOKEN");
     }
 

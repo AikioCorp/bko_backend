@@ -27,11 +27,14 @@ export const sendError = (
   statusCode = 500,
   details?: any
 ) => {
+  // Ne jamais exposer un message brut (Prisma, stack...) pour une 5xx en production.
+  const safeMessage =
+    statusCode >= 500 && process.env.NODE_ENV === "production" ? "Une erreur inattendue est survenue." : message;
   const response: ApiResponse = {
     success: false,
     error: {
       code,
-      message,
+      message: safeMessage,
       details,
     },
   };

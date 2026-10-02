@@ -16,7 +16,11 @@ import { AdminController } from "../../modules/admin/admin.controller.js";
 import { CollectionController } from "../../modules/collections/collection.controller.js";
 import { ClaimController } from "../../modules/claims/claim.controller.js";
 import { TranscriptController } from "../../modules/transcripts/transcript.controller.js";
-import { authenticateToken, optionalAuthenticateToken, requireAdmin } from "../../middlewares/auth.middleware.js";
+import { NotificationController } from "../../modules/notifications/notification.controller.js";
+import { CreatorManageController } from "../../modules/creator/creator-manage.controller.js";
+import { AdminConsoleController } from "../../modules/admin/admin-console.controller.js";
+import { requirePermission } from "../../middlewares/permission.middleware.js";
+import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
 import { prisma } from "../../config/prisma.js";
 
@@ -38,6 +42,43 @@ const authLimiter = rateLimit({
   },
 });
 
+// Limiteur par compte (email/identifiant) : empêche le brute-force distribué de l'OTP
+// et le spam d'envoi de codes, indépendamment de l'IP.
+const accountLimiter = (max: number) =>
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: process.env.NODE_ENV === "production" ? max : 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `acct:${(req as any).user?.id ?? (String(req.body?.email ?? req.body?.identifier ?? "").trim().toLowerCase() || "anon")}`,
+    validate: { keyGeneratorIpFallback: false },
+    message: {
+      success: false,
+      error: { code: "TOO_MANY_AUTH_ATTEMPTS", message: "Trop de tentatives. Réessayez dans quelques minutes." },
+    },
+  });
+
+// Limiteur du suivi d'écoute : borne la pollution des statistiques (par IP et par épisode).
+const playLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: process.env.NODE_ENV === "production" ? 30 : 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `play:${req.ip}:${req.params.id}`,
+  validate: { keyGeneratorIpFallback: false },
+  message: { success: false, error: { code: "TOO_MANY_REQUESTS", message: "Trop d'évènements d'écoute." } },
+});
+
+// Stockage local de développement : la route reçoit (et jette) le fichier envoyé par l'URL présignée
+// factice, pour que le parcours d'upload soit testable sans Cloudflare R2. Jamais en production.
+if (process.env.NODE_ENV !== "production" && !process.env.R2_ENDPOINT) {
+  router.put("/mock-storage/upload", (req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => res.status(200).end());
+    req.on("error", () => res.status(500).end());
+  });
+}
+
 // Healthchecks
 router.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString(), service: "Bko_backend API v1" });
@@ -52,11 +93,13 @@ router.get("/health/worker", (req, res) => {
 });
 
 // --- AUTHENTIFICATION ---
-router.post("/auth/register", authLimiter, AuthController.register);
-router.post("/auth/verify-otp", authLimiter, AuthController.verifyOtp);
-router.post("/auth/login", authLimiter, AuthController.login);
+router.post("/auth/register", authLimiter, accountLimiter(5), AuthController.register);
+router.post("/auth/verify-otp", authLimiter, accountLimiter(5), AuthController.verifyOtp);
+router.post("/auth/forgot-password", authLimiter, accountLimiter(3), AuthController.forgotPassword);
+router.post("/auth/reset-password", authLimiter, AuthController.resetPassword);
+router.post("/auth/login", authLimiter, accountLimiter(10), AuthController.login);
 router.post("/auth/refresh", authLimiter, AuthController.refreshToken);
-router.post("/auth/logout", AuthController.logout);
+router.post("/auth/logout", authLimiter, AuthController.logout);
 router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevices);
 
 // --- PROFIL & PRÉFÉRENCES ---
@@ -66,16 +109,21 @@ router.patch("/me/preferences", authenticateToken, UserController.updatePreferen
 router.get("/me/devices", authenticateToken, UserController.getDevices);
 router.delete("/me/devices/:id", authenticateToken, UserController.revokeDevice);
 
+// --- NOTIFICATIONS DANS L'APPLICATION ---
+router.get("/me/notifications", authenticateToken, NotificationController.list);
+router.get("/me/notifications/unread-count", authenticateToken, NotificationController.unreadCount);
+router.post("/me/notifications/read", authenticateToken, NotificationController.markRead);
+
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);
 router.post("/creator/market-access-requests", authenticateToken, MarketController.requestBetaAccess);
 
-router.get("/admin/markets", authenticateToken, requireAdmin, MarketController.getAdminMarkets);
-router.get("/admin/markets/:countryCode", authenticateToken, requireAdmin, MarketController.getMarketByCountryCode);
-router.patch("/admin/markets/:countryCode", authenticateToken, requireAdmin, MarketController.updateMarket);
-router.post("/admin/markets/:countryCode/activate", authenticateToken, requireAdmin, MarketController.activateMarket);
-router.post("/admin/markets/:countryCode/suspend", authenticateToken, requireAdmin, MarketController.suspendMarket);
-router.patch("/admin/creator-market-access/:id", authenticateToken, requireAdmin, MarketController.updateCreatorAccess);
+router.get("/admin/markets", authenticateToken, requirePermission("markets.view"), MarketController.getAdminMarkets);
+router.get("/admin/markets/:countryCode", authenticateToken, requirePermission("markets.view"), MarketController.getMarketByCountryCode);
+router.patch("/admin/markets/:countryCode", authenticateToken, requirePermission("markets.edit"), MarketController.updateMarket);
+router.post("/admin/markets/:countryCode/activate", authenticateToken, requirePermission("markets.edit"), MarketController.activateMarket);
+router.post("/admin/markets/:countryCode/suspend", authenticateToken, requirePermission("markets.edit"), MarketController.suspendMarket);
+router.patch("/admin/creator-market-access/:id", authenticateToken, requirePermission("markets.edit"), MarketController.updateCreatorAccess);
 
 // --- TRANSCRIPTION & CHAPITRES (VERTICALE 8) ---
 router.get("/episodes/:id/transcript", TranscriptController.getPublicTranscript);
@@ -88,24 +136,49 @@ router.patch("/creator/transcripts/segments/:id", authenticateToken, TranscriptC
 router.post("/creator/episodes/:episodeId/chapters", authenticateToken, TranscriptController.updateChapters);
 
 // --- BACKOFFICE ADMIN & CMS ÉDITORIAL ---
-router.get("/admin/dashboard", authenticateToken, requireAdmin, AdminController.getDashboard);
-router.get("/admin/catalog", authenticateToken, requireAdmin, AdminController.getCatalog);
-router.get("/admin/catalog/health", authenticateToken, requireAdmin, AdminController.getContentHealth);
-router.post("/admin/podcasts", authenticateToken, requireAdmin, AdminController.createPodcast);
-router.post("/admin/podcasts/from-url", authenticateToken, requireAdmin, AdminController.addFromUrlPreview);
-router.post("/admin/podcasts/detect-duplicates", authenticateToken, requireAdmin, AdminController.detectDuplicates);
-router.post("/admin/podcasts/merge", authenticateToken, requireAdmin, AdminController.mergePodcasts);
+router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
+router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
+router.get("/admin/catalog/health", authenticateToken, requirePermission("catalog.view"), AdminController.getContentHealth);
+router.post("/admin/podcasts", authenticateToken, requirePermission("catalog.create"), AdminController.createPodcast);
+router.post("/admin/podcasts/from-url", authenticateToken, requirePermission("catalog.create"), AdminController.addFromUrlPreview);
+router.post("/admin/podcasts/detect-duplicates", authenticateToken, requirePermission("catalog.view"), AdminController.detectDuplicates);
+router.post("/admin/podcasts/merge", authenticateToken, requirePermission("catalog.edit"), AdminController.mergePodcasts);
 
-router.get("/admin/people", authenticateToken, requireAdmin, AdminController.listPeople);
-router.post("/admin/people", authenticateToken, requireAdmin, AdminController.createPerson);
-router.post("/admin/people/merge", authenticateToken, requireAdmin, AdminController.mergePeople);
+router.get("/admin/people", authenticateToken, requirePermission("catalog.view"), AdminController.listPeople);
+router.post("/admin/people", authenticateToken, requirePermission("catalog.create"), AdminController.createPerson);
+router.post("/admin/people/merge", authenticateToken, requirePermission("catalog.edit"), AdminController.mergePeople);
 
-router.get("/admin/organizations", authenticateToken, requireAdmin, AdminController.listOrganizations);
-router.post("/admin/organizations", authenticateToken, requireAdmin, AdminController.createOrganization);
+router.get("/admin/organizations", authenticateToken, requirePermission("catalog.view"), AdminController.listOrganizations);
+router.post("/admin/organizations", authenticateToken, requirePermission("catalog.create"), AdminController.createOrganization);
 
-router.get("/admin/claims", authenticateToken, requireAdmin, ClaimController.getAdminClaims);
-router.patch("/admin/claims/:id/review", authenticateToken, requireAdmin, ClaimController.reviewClaim);
-router.get("/admin/audit", authenticateToken, requireAdmin, AdminController.getAuditLogs);
+router.get("/admin/claims", authenticateToken, requirePermission("claims.view"), ClaimController.getAdminClaims);
+router.patch("/admin/claims/:id/review", authenticateToken, requirePermission("claims.edit"), ClaimController.reviewClaim);
+router.get("/admin/audit", authenticateToken, requirePermission("audit.view"), AdminController.getAuditLogs);
+
+// --- CONSOLE D'ADMINISTRATION : supervision, validation, modération, utilisateurs, stockage ---
+router.get("/admin/overview", authenticateToken, requirePermission("dashboard.view"), AdminConsoleController.overview);
+router.get("/admin/reviews", authenticateToken, requirePermission("reviews.view"), AdminConsoleController.reviewQueue);
+router.post("/admin/reviews/episodes/:id", authenticateToken, requirePermission("reviews.edit"), AdminConsoleController.reviewEpisode);
+router.post("/admin/reviews/podcasts/:id", authenticateToken, requirePermission("reviews.edit"), AdminConsoleController.reviewPodcast);
+router.get("/admin/reports", authenticateToken, requirePermission("moderation.view"), AdminConsoleController.listReports);
+router.patch("/admin/reports/:id", authenticateToken, requirePermission("moderation.edit"), AdminConsoleController.handleReport);
+router.get("/admin/users", authenticateToken, requirePermission("users.view"), AdminConsoleController.listUsers);
+router.put("/admin/users/:id/roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserRoles);
+router.post("/admin/users/:id/suspension", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserSuspension);
+router.post("/admin/users/:id/creator-verification", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setCreatorVerification);
+router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
+router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);
+router.get("/admin/roles", authenticateToken, requirePermission("roles.view"), AdminConsoleController.listRoles);
+router.get("/admin/assignable-roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.assignableRoles);
+router.post("/admin/roles", authenticateToken, requirePermission("roles.create"), AdminConsoleController.createRole);
+router.put("/admin/roles/:id", authenticateToken, requirePermission("roles.edit"), AdminConsoleController.updateRole);
+router.delete("/admin/roles/:id", authenticateToken, requirePermission("roles.delete"), AdminConsoleController.deleteRole);
+router.get("/admin/storage", authenticateToken, requirePermission("storage.view"), AdminConsoleController.storage);
+router.post("/admin/jobs/:id/retry", authenticateToken, requirePermission("storage.edit"), AdminConsoleController.retryJob);
+router.get("/admin/settings", authenticateToken, requirePermission("settings.view"), AdminConsoleController.settings);
+
+// Signalement d'un contenu par un utilisateur connecté (limité pour éviter le spam)
+router.post("/reports", authenticateToken, accountLimiter(10), AdminConsoleController.createReport);
 
 // --- REVENDICATIONS DE PODCASTS (CLAIMS) ---
 router.post("/podcasts/:podcastId/claims", authenticateToken, ClaimController.submitClaim);
@@ -114,8 +187,8 @@ router.get("/me/claims", authenticateToken, ClaimController.getUserClaims);
 // --- COLLECTIONS ÉDITORIALES ---
 router.get("/collections", CollectionController.listCollections);
 router.get("/collections/:slug", CollectionController.getCollectionBySlug);
-router.post("/admin/collections", authenticateToken, requireAdmin, CollectionController.createCollection);
-router.patch("/admin/collections/:id/items", authenticateToken, requireAdmin, CollectionController.updateCollectionItems);
+router.post("/admin/collections", authenticateToken, requirePermission("catalog.edit"), CollectionController.createCollection);
+router.patch("/admin/collections/:id/items", authenticateToken, requirePermission("catalog.edit"), CollectionController.updateCollectionItems);
 
 // --- ORGANISATIONS PUBLIQUES ---
 router.get("/organizations/:slug", async (req, res) => {
@@ -166,6 +239,34 @@ router.post("/creator/episodes/:episodeId/publish", authenticateToken, CreatorCo
 router.post("/creator/episodes/:episodeId/schedule", authenticateToken, CreatorController.scheduleEpisode);
 
 router.get("/creator/podcasts/:id/members", authenticateToken, CreatorController.getMembers);
+// --- GESTION DES ÉPISODES (modifier, dépublier, programmer, archiver) ---
+router.get("/creator/episodes/:episodeId", authenticateToken, CreatorManageController.getEpisode);
+router.patch("/creator/episodes/:episodeId", authenticateToken, CreatorManageController.updateEpisode);
+router.post("/creator/episodes/:episodeId/unpublish", authenticateToken, CreatorManageController.unpublish);
+router.post("/creator/episodes/:episodeId/unschedule", authenticateToken, CreatorManageController.unschedule);
+router.post("/creator/episodes/:episodeId/archive", authenticateToken, CreatorManageController.archive);
+router.post("/creator/episodes/:episodeId/restore", authenticateToken, CreatorManageController.restore);
+router.delete("/creator/episodes/:episodeId/media-sources/:sourceId", authenticateToken, CreatorManageController.removeSource);
+router.post("/creator/episodes/:episodeId/media-sources/:sourceId/primary", authenticateToken, CreatorManageController.setPrimarySource);
+router.post("/creator/media/preview", authenticateToken, accountLimiter(60), CreatorManageController.previewLink);
+
+// --- SAISONS ---
+router.get("/creator/podcasts/:podcastId/seasons", authenticateToken, CreatorManageController.listSeasons);
+router.post("/creator/podcasts/:podcastId/seasons", authenticateToken, CreatorManageController.createSeason);
+router.patch("/creator/seasons/:seasonId", authenticateToken, CreatorManageController.updateSeason);
+router.delete("/creator/seasons/:seasonId", authenticateToken, CreatorManageController.deleteSeason);
+
+// --- STATISTIQUES ---
+router.get("/creator/podcasts/:podcastId/analytics", authenticateToken, CreatorManageController.analytics);
+router.post("/episodes/:id/plays", playLimiter, optionalAuthenticateToken, CreatorManageController.recordPlay);
+
+// --- ÉQUIPE & INVITATIONS ---
+router.patch("/creator/podcasts/:podcastId/members/:userId", authenticateToken, CreatorManageController.updateMember);
+router.delete("/creator/podcasts/:podcastId/members/:userId", authenticateToken, CreatorManageController.removeMember);
+router.get("/creator/podcasts/:podcastId/invitations", authenticateToken, CreatorManageController.listInvitations);
+router.delete("/creator/podcasts/:podcastId/invitations/:invitationId", authenticateToken, CreatorManageController.revokeInvitation);
+router.post("/invitations/accept", authenticateToken, accountLimiter(10), CreatorManageController.acceptInvitation);
+
 router.post("/creator/podcasts/:id/invitations", authenticateToken, CreatorController.inviteMember);
 
 // --- INTERACTIONS (FOLLOW, SAVE, HISTORY) ---
@@ -199,10 +300,10 @@ router.get("/home", DiscoveryController.getHome);
 router.get("/trending", DiscoveryController.getTrending);
 
 router.get("/podcasts", PodcastController.listPodcasts);
-router.get("/podcasts/:slug", PodcastController.getPodcastBySlug);
+router.get("/podcasts/:slug", optionalAuthenticateToken, PodcastController.getPodcastBySlug);
 
 router.get("/episodes/recent", EpisodeController.listRecentEpisodes);
-router.get("/podcasts/:podcastSlug/episodes/:episodeSlug", EpisodeController.getEpisodeBySlug);
+router.get("/podcasts/:podcastSlug/episodes/:episodeSlug", optionalAuthenticateToken, EpisodeController.getEpisodeBySlug);
 
 router.get("/categories", ReferentialController.getCategories);
 router.get("/categories/:slug", ReferentialController.getCategoryBySlug);

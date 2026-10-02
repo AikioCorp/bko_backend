@@ -38,8 +38,7 @@ export const optionalAuthenticateToken = (req: AuthenticatedRequest, res: Respon
 
   if (token) {
     try {
-      const secret = process.env.JWT_SECRET || "bamako-podcast-super-secret-jwt-key-2026";
-      const decoded = jwt.verify(token, secret) as any;
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
       req.user = {
         id: decoded.id,
         email: decoded.email,

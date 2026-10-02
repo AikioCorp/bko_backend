@@ -18,6 +18,12 @@ export class FeatureFlags {
     return process.env.REQUIRE_VERIFIED_LOGIN === "true";
   }
 
+  // Si activé, les contenus soumis par les créateurs passent par la file de validation
+  // de l'administration (statut PENDING_REVIEW) au lieu d'être publiés directement.
+  static get requireContentReview(): boolean {
+    return process.env.REQUIRE_CONTENT_REVIEW === "true";
+  }
+
   static checkUploadsEnabled(): void {
     if (!this.enableUploads) {
       throw new Error("FEATURE_DISABLED_UPLOADS: L'upload natif de médias est temporairement désactivé par l'administration.");

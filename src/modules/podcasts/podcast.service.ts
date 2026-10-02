@@ -84,6 +84,7 @@ export class PodcastService {
         episodes: {
           where: { status: "PUBLISHED" },
           orderBy: { publishedAt: "desc" },
+          take: 1,
           include: {
             mediaSources: true,
           },
@@ -168,7 +169,8 @@ export class PodcastService {
       },
     });
 
-    if (!podcast) return null;
+    // Visible publiquement seulement s'il est publié ou non répertorié (accessible par son lien).
+    if (!podcast || (podcast.status !== "PUBLISHED" && podcast.status !== "UNLISTED")) return null;
 
     return {
       ...podcast,

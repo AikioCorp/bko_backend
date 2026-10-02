@@ -98,6 +98,7 @@ export class InteractionService {
       where: {
         userId,
         completed: false, // Seulement les épisodes non terminés
+        episode: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } },
       },
       orderBy: { lastPlayedAt: "desc" },
       take: limit,

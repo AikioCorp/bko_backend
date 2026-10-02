@@ -32,6 +32,9 @@ export class MediaResolverService {
       throw new Error("INVALID_URL");
     }
 
+    // Seuls http(s) sont acceptés : un lien "javascript:" ou "data:" serait un vecteur XSS une fois affiché.
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") throw new Error("INVALID_URL");
+
     const hostname = parsedUrl.hostname.toLowerCase();
     const isDomainAllowed = ALLOWED_EMBED_DOMAINS.some((domain) => hostname === domain || hostname.endsWith("." + domain));
 
@@ -94,6 +97,21 @@ export class MediaResolverService {
         playbackMode: "EMBED",
         externalUrl: rawUrl,
         embedUrl: rawUrl.replace("podcasts.apple.com", "embed.podcasts.apple.com"),
+        externalId: null,
+      };
+    }
+
+    // FICHIER MÉDIA DIRECT (.mp3, .m4a, .mp4…) hébergé ailleurs : lu nativement par le lecteur
+    const path = parsedUrl.pathname.toLowerCase();
+    const audioExt = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)$/.test(path);
+    const videoExt = /\.(mp4|m4v|webm|mov)$/.test(path);
+    if (audioExt || videoExt) {
+      return {
+        type: audioExt ? "AUDIO" : "VIDEO",
+        provider: "OTHER",
+        playbackMode: "NATIVE",
+        externalUrl: rawUrl,
+        embedUrl: null,
         externalId: null,
       };
     }

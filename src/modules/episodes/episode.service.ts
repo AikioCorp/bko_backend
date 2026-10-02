@@ -7,6 +7,7 @@ export class EpisodeService {
         slug: episodeSlug,
         podcast: {
           slug: podcastSlug,
+          status: { in: ["PUBLISHED", "UNLISTED"] },
         },
         status: "PUBLISHED",
       },
@@ -20,9 +21,8 @@ export class EpisodeService {
         },
         season: true,
         mediaSources: {
-          include: {
-            mediaAsset: true,
-          },
+          // Seule l'info utile au lecteur : jamais le bucket ni la clé de stockage.
+          include: { mediaAsset: { select: { status: true, durationSeconds: true, mimeType: true } } },
         },
         people: {
           include: {
@@ -50,9 +50,9 @@ export class EpisodeService {
 
   static async getRecentEpisodes(limit = 20, offset = 0) {
     const [total, episodes] = await Promise.all([
-      prisma.episode.count({ where: { status: "PUBLISHED" } }),
+      prisma.episode.count({ where: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } } }),
       prisma.episode.findMany({
-        where: { status: "PUBLISHED" },
+        where: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } },
         take: limit,
         skip: offset,
         orderBy: { publishedAt: "desc" },

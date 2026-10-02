@@ -2,6 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { slugify } from "./creator-profile.service.js";
 import { MarketService } from "../markets/market.service.js";
 import { PodcastMemberRole, PodcastStatus } from "@prisma/client";
+import { ContentReviewService } from "../../services/content-review.service.js";
 
 export class CreatorPodcastService {
   static async listCreatorPodcasts(userId: string) {
@@ -95,7 +96,7 @@ export class CreatorPodcastService {
         banner: data.banner,
         countryId: countryCode,
         primaryLanguageCode: data.primaryLanguageCode || "fr",
-        status: PodcastStatus.PUBLISHED,
+        status: (await ContentReviewService.requiresReview(userId)) ? PodcastStatus.PENDING_REVIEW : PodcastStatus.PUBLISHED,
         ownershipStatus: "CLAIMED",
         creationSource: "CREATOR",
         website: data.website,
@@ -178,12 +179,53 @@ export class CreatorPodcastService {
       }
     }
 
-    return prisma.podcast.update({
-      where: { id: podcastId },
-      data: {
-        ...data,
-        ...(newSlug ? { slug: newSlug } : {}),
-      },
+    // Le statut est piloté par la modération : un créateur ne peut ni lever une suspension,
+    // ni court-circuiter la validation, ni s'auto-approuver.
+    // Liste blanche : le corps de la requête n'est jamais répandu tel quel dans la base
+    // (sinon un créateur pourrait s'attribuer isOfficial, ownershipStatus, qualityScore…).
+    const input = data as Record<string, any>;
+    const requestedStatus = input.status as PodcastStatus | undefined;
+    const rest: Record<string, any> = {};
+    for (const key of ["name", "description", "shortDescription", "cover", "banner", "countryId", "primaryLanguageCode", "website", "city"]) {
+      if (input[key] !== undefined) rest[key] = input[key];
+    }
+    const categoryIds: string[] | undefined = Array.isArray(input.categoryIds) ? input.categoryIds : undefined;
+    const topicIds: string[] | undefined = Array.isArray(input.topicIds) ? input.topicIds : undefined;
+    let statusChange: { status: PodcastStatus } | undefined;
+    if (requestedStatus) {
+      const current = await prisma.podcast.findUnique({ where: { id: podcastId }, select: { status: true } });
+      if (!current) throw new Error("PODCAST_NOT_FOUND");
+      if (current.status === "SUSPENDED") throw new Error("FORBIDDEN");
+      const creatorAllowed: PodcastStatus[] = ["DRAFT", "UNLISTED", "ARCHIVED"];
+      if (creatorAllowed.includes(requestedStatus)) {
+        statusChange = { status: requestedStatus };
+      } else if (requestedStatus === "PUBLISHED" || requestedStatus === "PENDING_REVIEW") {
+        if (current.status !== "PENDING_REVIEW") {
+          statusChange = { status: (await ContentReviewService.requiresReview(userId)) ? "PENDING_REVIEW" : "PUBLISHED" };
+        }
+      } else {
+        throw new Error("FORBIDDEN");
+      }
+    }
+
+    return prisma.$transaction(async (tx) => {
+      if (categoryIds) {
+        await tx.podcastCategory.deleteMany({ where: { podcastId } });
+        await tx.podcastCategory.createMany({ data: categoryIds.map((categoryId) => ({ podcastId, categoryId })), skipDuplicates: true });
+      }
+      if (topicIds) {
+        await tx.podcastTopic.deleteMany({ where: { podcastId } });
+        await tx.podcastTopic.createMany({ data: topicIds.map((topicId) => ({ podcastId, topicId })), skipDuplicates: true });
+      }
+      return tx.podcast.update({
+        where: { id: podcastId },
+        data: {
+          ...rest,
+          ...(statusChange ?? {}),
+          ...(newSlug ? { slug: newSlug } : {}),
+        },
+        include: { categories: { include: { category: true } }, topics: { include: { topic: true } } },
+      });
     });
   }
 

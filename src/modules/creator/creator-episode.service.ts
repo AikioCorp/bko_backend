@@ -3,6 +3,8 @@ import { slugify } from "./creator-profile.service.js";
 import { MediaResolverService } from "./media-resolver.service.js";
 import { MarketService } from "../markets/market.service.js";
 import { EpisodeStatus, MediaType } from "@prisma/client";
+import { NotificationService } from "../../services/notification.service.js";
+import { ContentReviewService } from "../../services/content-review.service.js";
 
 export class CreatorEpisodeService {
   static async listEpisodes(userId: string, podcastId: string, status?: EpisodeStatus) {
@@ -64,7 +66,8 @@ export class CreatorEpisodeService {
         seasonId: data.seasonId,
         episodeNumber: data.episodeNumber,
         languageCode: data.languageCode || "fr",
-        status: data.status || EpisodeStatus.DRAFT,
+        // Toujours brouillon : la publication passe par publish/schedule (média prêt, validation, marché).
+        status: EpisodeStatus.DRAFT,
         ...(data.topicIds
           ? {
               topics: {
@@ -171,14 +174,30 @@ export class CreatorEpisodeService {
     if (episode.mediaSources.length === 0) {
       throw new Error("VALIDATION_ERROR_NO_MEDIA_SOURCE");
     }
+    // Un fichier encore en traitement ou en échec ne peut pas être publié.
+    const assetIds = episode.mediaSources.map((m) => m.mediaAssetId).filter((id): id is string => !!id);
+    if (assetIds.length) {
+      const notReady = await prisma.mediaAsset.count({ where: { id: { in: assetIds }, status: { not: "READY" } } });
+      if (notReady > 0) throw new Error("MEDIA_NOT_READY");
+    }
 
-    return prisma.episode.update({
+    // Modération a priori (optionnelle) : l'épisode attend la validation de l'administration.
+    if (await ContentReviewService.requiresReview(userId)) {
+      return prisma.episode.update({
+        where: { id: episodeId },
+        data: { status: EpisodeStatus.PENDING_REVIEW, reviewNote: null },
+      });
+    }
+
+    const published = await prisma.episode.update({
       where: { id: episodeId },
       data: {
         status: EpisodeStatus.PUBLISHED,
         publishedAt: new Date(),
       },
     });
+    await NotificationService.notifyFollowersOfEpisode(episodeId);
+    return published;
   }
 
   static async scheduleEpisode(userId: string, episodeId: string, publishAt: string) {
@@ -196,6 +215,14 @@ export class CreatorEpisodeService {
     const scheduledDate = new Date(publishAt);
     if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
       throw new Error("INVALID_SCHEDULE_DATE");
+    }
+
+    // Créateur soumis à validation : la date visée est conservée ; l'admin programmera à l'approbation.
+    if (await ContentReviewService.requiresReview(userId)) {
+      return prisma.episode.update({
+        where: { id: episodeId },
+        data: { status: EpisodeStatus.PENDING_REVIEW, publishedAt: scheduledDate, reviewNote: null },
+      });
     }
 
     await prisma.jobQueueItem.create({
