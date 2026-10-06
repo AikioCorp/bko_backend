@@ -9,6 +9,10 @@ import { PermissionService } from "./services/permission.service.js";
 
 dotenv.config();
 
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 

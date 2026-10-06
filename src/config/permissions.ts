@@ -13,7 +13,7 @@ export interface Feature {
 
 export const FEATURES: Feature[] = [
   { key: "dashboard", label: "Supervision & métriques", description: "Tableau de bord, indicateurs globaux", caps: ["view"] },
-  { key: "catalog", label: "Podcasts & séries", description: "Catalogue, personnes, organisations, collections, fusions", caps: ["view", "create", "edit"] },
+  { key: "catalog", label: "Podcasts & séries", description: "Catalogue, personnes, organisations, collections, fusions", caps: ["view", "create", "edit", "delete"] },
   { key: "reviews", label: "Validation des contenus", description: "Valider ou refuser les contenus soumis par les créateurs", caps: ["view", "edit"] },
   { key: "moderation", label: "Modération & signalements", description: "Traiter les signalements, retirer un contenu", caps: ["view", "edit"] },
   { key: "claims", label: "Revendications", description: "Examiner les demandes de propriété de podcast", caps: ["view", "edit"] },

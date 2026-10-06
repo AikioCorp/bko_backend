@@ -39,12 +39,12 @@ export class UserService {
 
     if (!user) throw new Error("USER_NOT_FOUND");
 
-    const roles = user.userRoles.map((ur) => ur.role.name);
+    const roles = user.userRoles?.map((ur) => ur.role?.name).filter(Boolean) || [];
     const permissions = Array.from(
       new Set(
-        user.userRoles.flatMap((ur) =>
-          ur.role.rolePermissions.map((rp) => rp.permission.code)
-        )
+        user.userRoles?.flatMap((ur) =>
+          ur.role?.rolePermissions?.map((rp) => rp.permission?.code).filter(Boolean) || []
+        ) || []
       )
     );
 

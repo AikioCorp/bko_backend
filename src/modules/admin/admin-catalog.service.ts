@@ -64,6 +64,108 @@ export class AdminCatalogService {
     };
   }
 
+  static async getPodcastById(idOrSlug: string) {
+    return prisma.podcast.findFirst({
+      where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+      include: {
+        country: true,
+        organization: true,
+        primaryLanguage: true,
+        categories: { include: { category: true } },
+        rssFeed: true,
+        permanentPersons: { include: { person: true } },
+        _count: { select: { episodes: true, followers: true, claims: true } },
+      },
+    });
+  }
+
+  static async getEpisodeById(idOrSlug: string) {
+    return prisma.episode.findFirst({
+      where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+      include: {
+        podcast: { select: { id: true, name: true, slug: true, cover: true } },
+        mediaSources: true,
+        transcripts: true,
+        chapters: { orderBy: { startTimeMs: 'asc' } }
+      }
+    });
+  }
+
+  static async createAdminEpisode(adminId: string, idOrSlug: string, data: any) {
+    const podcast = await prisma.podcast.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
+    if (!podcast) throw new Error("Podcast introuvable");
+    const slug = (data.title || "episode").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Math.random().toString(36).substr(2, 5);
+
+    let mediaSourceData = undefined;
+    if (data.url) {
+      try {
+        const resolved = MediaResolverService.resolveUrl(data.url);
+        mediaSourceData = {
+          create: [{
+            type: resolved.type,
+            sourceType: "EXTERNAL",
+            provider: resolved.provider,
+            playbackMode: resolved.playbackMode,
+            externalUrl: resolved.externalUrl,
+            embedUrl: resolved.embedUrl,
+            externalId: resolved.externalId,
+            isPrimaryVideo: resolved.type === "VIDEO",
+            isPrimaryAudio: resolved.type === "AUDIO",
+          }]
+        };
+      } catch (e) {
+        // Ignorer si URL invalide
+      }
+    }
+
+    return prisma.episode.create({
+      data: {
+        podcastId: podcast.id,
+        title: data.title,
+        slug,
+        description: data.description || "",
+        status: data.status || "DRAFT",
+        creationSource: "ADMIN",
+        ...(mediaSourceData ? { mediaSources: mediaSourceData } : {})
+      }
+    });
+  }
+
+  static async listEpisodes(idOrSlug: string) {
+    const podcast = await prisma.podcast.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
+    if (!podcast) return [];
+    return prisma.episode.findMany({
+      where: { podcastId: podcast.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        mediaSources: true,
+      }
+    });
+  }
+
+  static async updateAdminEpisode(adminId: string, idOrSlug: string, data: any) {
+    const episode = await prisma.episode.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
+    if (!episode) throw new Error("Épisode introuvable");
+
+    const updateData: any = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.slug !== undefined) updateData.slug = data.slug;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.cover !== undefined) updateData.cover = data.cover;
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.episodeNumber !== undefined) updateData.episodeNumber = data.episodeNumber ? Number(data.episodeNumber) : null;
+    
+    // Si l'épisode est publié pour la première fois
+    if (data.status === "PUBLISHED" && episode.status !== "PUBLISHED" && !episode.publishedAt) {
+      updateData.publishedAt = new Date();
+    }
+
+    return prisma.episode.update({
+      where: { id: episode.id },
+      data: updateData,
+    });
+  }
+
   static async createAdminPodcast(
     adminUserId: string,
     data: {
@@ -80,6 +182,7 @@ export class AdminCatalogService {
       categoryIds?: string[];
       topicIds?: string[];
       ownershipStatus?: PodcastOwnershipStatus;
+      status?: PodcastStatus;
     }
   ) {
     let slugBase = slugify(data.name);
@@ -103,7 +206,7 @@ export class AdminCatalogService {
         city: data.city,
         website: data.website,
         organizationId: data.organizationId,
-        status: PodcastStatus.PUBLISHED,
+        status: data.status || PodcastStatus.DRAFT,
         ownershipStatus: data.ownershipStatus || PodcastOwnershipStatus.UNCLAIMED,
         creationSource: CreationSource.ADMIN,
         managedByBamakoPodcast: true,
@@ -129,8 +232,88 @@ export class AdminCatalogService {
     return podcast;
   }
 
+  static async updateAdminPodcast(adminUserId: string, idOrSlug: string, data: any) {
+    const podcast = await prisma.podcast.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
+    if (!podcast) throw new Error("Podcast introuvable");
+
+    const updateData: any = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.shortDescription !== undefined) updateData.shortDescription = data.shortDescription;
+    if (data.cover !== undefined) updateData.cover = data.cover;
+    if (data.countryId !== undefined) updateData.countryId = data.countryId;
+    if (data.primaryLanguageCode !== undefined) updateData.primaryLanguageCode = data.primaryLanguageCode;
+    if (data.website !== undefined) updateData.website = data.website;
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.organizationId !== undefined) updateData.organizationId = data.organizationId || null;
+    if (data.ownershipStatus !== undefined) updateData.ownershipStatus = data.ownershipStatus;
+    if (data.managedByBamakoPodcast !== undefined) updateData.managedByBamakoPodcast = data.managedByBamakoPodcast;
+    if (data.isOfficial !== undefined) updateData.isOfficial = data.isOfficial;
+    if (data.redirectUrl !== undefined) updateData.redirectUrl = data.redirectUrl || null;
+
+    const updated = await prisma.podcast.update({
+      where: { id: podcast.id },
+      data: updateData,
+    });
+
+    if (data.categoryIds !== undefined && Array.isArray(data.categoryIds)) {
+      await prisma.podcastCategory.deleteMany({ where: { podcastId } });
+      if (data.categoryIds.length > 0) {
+        await prisma.podcastCategory.createMany({
+          data: data.categoryIds.map((catId: string) => ({ podcastId, categoryId: catId })),
+        });
+      }
+    }
+
+    await AuditService.logAction({
+      actorId: adminUserId,
+      action: "PODCAST_UPDATED_ADMIN",
+      entityType: "PODCAST",
+      entityId: podcastId,
+      previousState: podcast,
+      newState: updated,
+    });
+
+    return updated;
+  }
+
+  static async deleteAdminPodcast(adminUserId: string, idOrSlug: string) {
+    const podcast = await prisma.podcast.findFirst({ where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] } });
+    if (!podcast) throw new Error("Podcast introuvable");
+
+    await prisma.podcast.delete({ where: { id: podcast.id } });
+
+    await AuditService.logAction({
+      actorId: adminUserId,
+      action: "PODCAST_DELETED_ADMIN",
+      entityType: "PODCAST",
+      entityId: podcast.id,
+      previousState: podcast,
+    });
+
+    return { success: true };
+  }
+
   static async addFromUrlPreview(url: string) {
     const resolved = MediaResolverService.resolveUrl(url);
+    
+    let suggestedName = `Podcast ${resolved.provider}`;
+    let suggestedCover = "https://bamakopodcast.studio/images/image1.jpg";
+    let suggestedDescription = `Contenu pré-rempli depuis ${resolved.provider}.`;
+
+    if (resolved.provider === "YOUTUBE" && resolved.externalId) {
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${resolved.externalId}&format=json`);
+        if (oembedRes.ok) {
+          const data = await oembedRes.json();
+          if (data.title) suggestedName = data.title;
+          if (data.thumbnail_url) suggestedCover = data.thumbnail_url;
+          suggestedDescription = data.author_name ? `Vidéo YouTube de la chaîne ${data.author_name}.` : "Vidéo YouTube.";
+        }
+      } catch (e) {
+        // Ignorer
+      }
+    }
 
     return {
       url,
@@ -139,9 +322,9 @@ export class AdminCatalogService {
       playbackMode: resolved.playbackMode,
       externalId: resolved.externalId,
       embedUrl: resolved.embedUrl,
-      suggestedName: `Podcast ${resolved.provider}`,
-      suggestedDescription: `Contenu pré-rempli depuis ${resolved.provider}.`,
-      suggestedCover: "https://bamakopodcast.studio/images/image1.jpg",
+      suggestedName,
+      suggestedDescription,
+      suggestedCover,
     };
   }
 

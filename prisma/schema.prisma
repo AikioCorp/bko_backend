@@ -31,6 +31,12 @@ enum EpisodeStatus {
   FAILED
 }
 
+enum EpisodeType {
+  FULL
+  TRAILER
+  BONUS
+}
+
 enum MediaAssetStatus {
   UPLOADING
   PROCESSING
@@ -590,7 +596,8 @@ model Podcast {
   isOfficial             Boolean                @default(false)
   qualityScore           Int                    @default(70)
 
-  website String?
+  website     String?
+  redirectUrl String?
 
   secondaryLanguages PodcastLanguage[]
   alternateTitles    PodcastAlternateTitle[]
@@ -726,6 +733,11 @@ model Episode {
   reviewedById     String?
   creationSource   CreationSource @default(CREATOR)
   isManuallyEdited Boolean        @default(false)
+
+  // Résumé court (cartes), type (complet / bande-annonce / bonus) et contenu explicite
+  summary     String?     @db.Text
+  episodeType EpisodeType @default(FULL)
+  explicit    Boolean     @default(false)
 
   languageCode String?
   language     Language? @relation(fields: [languageCode], references: [code])
@@ -1121,6 +1133,7 @@ model Language {
   code              String                   @id
   name              String
   nativeName        String
+  isActive          Boolean                  @default(true)
   primaryPodcasts   Podcast[]                @relation("PodcastPrimaryLanguage")
   secondaryPodcasts PodcastLanguage[]        @relation("PodcastSecondaryLanguages")
   episodes          Episode[]
@@ -1134,6 +1147,7 @@ model Category {
   name        String
   description String?
   icon        String?
+  isActive    Boolean           @default(true)
   podcasts    PodcastCategory[]
 }
 
@@ -1365,4 +1379,28 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, readAt, createdAt])
+}
+// ======================================================
+// TARIFS & STUDIO (OFFRES ET SERVICES)
+// ======================================================
+
+enum OfferType {
+  PACKAGE
+  SERVICE
+}
+
+model StudioOffer {
+  id          String   @id @default(cuid())
+  type        OfferType
+  name        String
+  price       String
+  unit        String?
+  description String   @db.Text
+  features    String[]
+  isPopular   Boolean  @default(false)
+  iconName    String?
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

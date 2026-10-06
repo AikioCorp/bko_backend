@@ -37,11 +37,80 @@ export class AdminController {
     }
   }
 
+  static async getPodcast(req: AuthenticatedRequest, res: Response) {
+    try {
+      const podcast = await AdminCatalogService.getPodcastById(req.params.id);
+      if (!podcast) return sendError(res, "Podcast introuvable", "NOT_FOUND", 404);
+      return sendSuccess(res, podcast);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async listEpisodes(req: AuthenticatedRequest, res: Response) {
+    try {
+      const episodes = await AdminCatalogService.listEpisodes(req.params.id);
+      return sendSuccess(res, episodes);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async createEpisode(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const episode = await AdminCatalogService.createAdminEpisode(req.user.id, req.params.id, req.body);
+      return sendSuccess(res, episode, null, 201);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async getEpisode(req: AuthenticatedRequest, res: Response) {
+    try {
+      const episode = await AdminCatalogService.getEpisodeById(req.params.id);
+      if (!episode) return sendError(res, "Épisode introuvable", "NOT_FOUND", 404);
+      return sendSuccess(res, episode);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async updateEpisode(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const episode = await AdminCatalogService.updateAdminEpisode(req.user.id, req.params.id, req.body);
+      return sendSuccess(res, episode);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
   static async createPodcast(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
       const podcast = await AdminCatalogService.createAdminPodcast(req.user.id, req.body);
       return sendSuccess(res, podcast, null, 201);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async updatePodcast(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const podcast = await AdminCatalogService.updateAdminPodcast(req.user.id, req.params.id, req.body);
+      return sendSuccess(res, podcast);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async deletePodcast(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await AdminCatalogService.deleteAdminPodcast(req.user.id, req.params.id);
+      return sendSuccess(res, result);
     } catch (error: any) {
       return sendError(res, error.message);
     }

@@ -7,6 +7,7 @@ import { PodcastController } from "../../modules/podcasts/podcast.controller.js"
 import { EpisodeController } from "../../modules/episodes/episode.controller.js";
 import { SearchController } from "../../modules/search/search.controller.js";
 import { DiscoveryController } from "../../modules/discovery/discovery.controller.js";
+import { StudioOfferController } from "../../modules/studio/StudioOfferController.js";
 import { ReferentialController } from "../../modules/referentials/referential.controller.js";
 import { CreatorController } from "../../modules/creator/creator.controller.js";
 import { UploadController } from "../../modules/media/upload.controller.js";
@@ -18,6 +19,8 @@ import { ClaimController } from "../../modules/claims/claim.controller.js";
 import { TranscriptController } from "../../modules/transcripts/transcript.controller.js";
 import { NotificationController } from "../../modules/notifications/notification.controller.js";
 import { CreatorManageController } from "../../modules/creator/creator-manage.controller.js";
+import { AdminRssController } from "../../modules/admin/admin-rss.controller.js";
+import { AdminClassificationController } from "../../modules/admin/admin-classification.controller.js";
 import { AdminConsoleController } from "../../modules/admin/admin-console.controller.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
 import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
@@ -73,8 +76,8 @@ const playLimiter = rateLimit({
 // factice, pour que le parcours d'upload soit testable sans Cloudflare R2. Jamais en production.
 if (process.env.NODE_ENV !== "production" && !process.env.R2_ENDPOINT) {
   router.put("/mock-storage/upload", (req, res) => {
-    req.on("data", () => {});
-    req.on("end", () => res.status(200).end());
+    req.resume();
+    req.on("end", () => res.status(200).send("OK"));
     req.on("error", () => res.status(500).end());
   });
 }
@@ -139,7 +142,30 @@ router.post("/creator/episodes/:episodeId/chapters", authenticateToken, Transcri
 router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
 router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
 router.get("/admin/catalog/health", authenticateToken, requirePermission("catalog.view"), AdminController.getContentHealth);
+router.get("/admin/podcasts/:id", authenticateToken, requirePermission("catalog.view"), AdminController.getPodcast);
+router.get("/admin/podcasts/:id/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listEpisodes);
+import { AdminEpisodeController } from "../../modules/admin/admin-episode.controller.js";
+
+// --- ADMIN EPISODES V2 (Création & Édition détaillée) ---
+router.post("/admin/podcasts/:podcastId/episodes", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.createDraft);
+router.get("/admin/episodes/:id", authenticateToken, requirePermission("catalog.view"), AdminEpisodeController.get);
+router.patch("/admin/episodes/:id", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.update);
+router.post("/admin/episodes/:id/audio/uploads", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.createAudioUpload);
+router.post("/admin/episodes/:id/audio/uploads/:uploadId/complete", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.completeAudioUpload);
+router.post("/admin/episodes/:id/audio/url", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.setAudioUrl);
+router.delete("/admin/episodes/:id/audio", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.removeAudio);
+router.post("/admin/media/youtube/preview", authenticateToken, requirePermission("catalog.view"), AdminEpisodeController.previewYoutube);
+router.post("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.setYoutube);
+router.post("/admin/episodes/:id/youtube/check", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.reportYoutubeCheck);
+router.delete("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.removeYoutube);
+router.post("/admin/episodes/:id/publish", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.publish);
+
+// Note : L'ancienne route POST /admin/podcasts/:id/episodes du AdminController est supplantée
+// On laisse l'ancienne /admin/episodes/:id en PUT pour l'instant (utilisée par la v1).
+router.put("/admin/episodes/:id", authenticateToken, requirePermission("catalog.edit"), AdminController.updateEpisode);
 router.post("/admin/podcasts", authenticateToken, requirePermission("catalog.create"), AdminController.createPodcast);
+router.put("/admin/podcasts/:id", authenticateToken, requirePermission("catalog.edit"), AdminController.updatePodcast);
+router.delete("/admin/podcasts/:id", authenticateToken, requirePermission("catalog.delete"), AdminController.deletePodcast);
 router.post("/admin/podcasts/from-url", authenticateToken, requirePermission("catalog.create"), AdminController.addFromUrlPreview);
 router.post("/admin/podcasts/detect-duplicates", authenticateToken, requirePermission("catalog.view"), AdminController.detectDuplicates);
 router.post("/admin/podcasts/merge", authenticateToken, requirePermission("catalog.edit"), AdminController.mergePodcasts);
@@ -154,6 +180,26 @@ router.post("/admin/organizations", authenticateToken, requirePermission("catalo
 router.get("/admin/claims", authenticateToken, requirePermission("claims.view"), ClaimController.getAdminClaims);
 router.patch("/admin/claims/:id/review", authenticateToken, requirePermission("claims.edit"), ClaimController.reviewClaim);
 router.get("/admin/audit", authenticateToken, requirePermission("audit.view"), AdminController.getAuditLogs);
+
+
+
+// --- ADMIN RSS IMPORTS ---
+router.post("/admin/rss/preview", authenticateToken, requirePermission("catalog.create"), AdminRssController.previewRss);
+router.post("/admin/rss/imports", authenticateToken, requirePermission("catalog.create"), AdminRssController.createImport);
+router.get("/admin/rss/imports/:id", authenticateToken, requirePermission("catalog.view"), AdminRssController.getImportStatus);
+
+// --- ADMIN CATEGORIES & LANGUAGES ---
+router.get("/admin/categories", authenticateToken, AdminClassificationController.listCategories);
+router.post("/admin/categories", authenticateToken, requirePermission("catalog.create"), AdminClassificationController.createCategory);
+router.put("/admin/categories/:id", authenticateToken, requirePermission("catalog.edit"), AdminClassificationController.updateCategory);
+router.delete("/admin/categories/:id", authenticateToken, requirePermission("catalog.delete"), AdminClassificationController.deleteCategory);
+
+
+router.get("/admin/languages", authenticateToken, AdminClassificationController.listLanguages);
+router.post("/admin/languages", authenticateToken, requirePermission("catalog.create"), AdminClassificationController.createLanguage);
+router.put("/admin/languages/:code", authenticateToken, requirePermission("catalog.edit"), AdminClassificationController.updateLanguage);
+router.delete("/admin/languages/:code", authenticateToken, requirePermission("catalog.delete"), AdminClassificationController.deleteLanguage);
+
 
 // --- CONSOLE D'ADMINISTRATION : supervision, validation, modération, utilisateurs, stockage ---
 router.get("/admin/overview", authenticateToken, requirePermission("dashboard.view"), AdminConsoleController.overview);
@@ -316,5 +362,15 @@ router.get("/countries/:code", ReferentialController.getCountryByCode);
 
 router.get("/languages", ReferentialController.getLanguages);
 router.get("/languages/:code", ReferentialController.getLanguageByCode);
+
+
+// --- STUDIO OFFERS & PRICING ---
+router.get("/studio-offers", StudioOfferController.getActiveOffers); // Public
+
+// Admin routes
+router.get("/admin/studio-offers", authenticateToken, StudioOfferController.getAllOffers);
+router.post("/admin/studio-offers", authenticateToken, StudioOfferController.createOffer);
+router.patch("/admin/studio-offers/:id", authenticateToken, StudioOfferController.updateOffer);
+router.delete("/admin/studio-offers/:id", authenticateToken, StudioOfferController.deleteOffer);
 
 export default router;

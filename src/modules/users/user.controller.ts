@@ -10,6 +10,7 @@ export class UserController {
       const profile = await UserService.getMe(req.user.id);
       return sendSuccess(res, profile);
     } catch (error: any) {
+      console.error("[UserController.getMe] Error:", error);
       return sendError(res, error.message || "Erreur lors de la récupération du profil.");
     }
   }
