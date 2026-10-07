@@ -32,7 +32,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-RUN apt-get update && apt-get install -y openssl ca-certificates dumb-init curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssl ca-certificates dumb-init curl wget && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 COPY prisma ./prisma/
