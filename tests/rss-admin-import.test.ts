@@ -4,6 +4,10 @@ import { AdminRssController } from "../src/modules/admin/admin-rss.controller.js
 import { Request, Response } from "express";
 
 async function runRssImportTests() {
+  if (!process.env.DATABASE_URL?.includes("localhost") && !process.env.DATABASE_URL?.includes("127.0.0.1") && !process.env.DATABASE_URL?.includes("5437")) {
+    console.error("Safety abort: Do not run destructive E2E tests on a remote production DB.");
+    process.exit(1);
+  }
   console.log("=================================================");
   console.log("🚀 DÉMARRAGE DU TEST D'IMPORT RSS ADMIN");
   console.log("=================================================\n");
@@ -26,11 +30,16 @@ async function runRssImportTests() {
   }
 
   // Cleanup
-    const existingTestPodcast = await prisma.podcast.findFirst({ where: { name: "Test Podcast" } });
-  if (existingTestPodcast) {
-    await prisma.podcast.delete({ where: { id: existingTestPodcast.id } });
+  const testPodcasts = await prisma.podcast.findMany({ 
+    where: { name: { startsWith: "Afropod Test" } } 
+  });
+  for (const p of testPodcasts) {
+    const feeds = await prisma.rssFeed.findMany({ where: { podcastId: p.id } });
+    for (const f of feeds) {
+      await prisma.jobQueueItem.deleteMany({ where: { queueName: "rss-importer", payload: { path: ["rssFeedId"], equals: f.id } } });
+    }
+    await prisma.podcast.delete({ where: { id: p.id } });
   }
-  await prisma.jobQueueItem.deleteMany({ where: { queueName: "rss-importer" } });
 
   let operationId: string;
   let podcastId: string;

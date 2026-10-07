@@ -47,21 +47,33 @@ export class RssWorkerService {
         syncStatus: { notIn: ['SYNCING', 'PENDING'] }
       }
     });
+
     for (const feed of feeds) {
-      await prisma.$transaction(async (tx) => {
-        await tx.jobQueueItem.create({
-          data: {
-            queueName: 'rss-importer',
-            jobType: 'import-feed',
-            payload: { rssFeedId: feed.id },
-            status: 'PENDING'
-          }
-        });
-        await tx.rssFeed.update({
-          where: { id: feed.id },
-          data: { syncStatus: 'PENDING', nextSyncAt: null }
-        });
+      // 1. Verrouiller la tâche en mettant à jour le statut atomiquement
+      const lockResult = await prisma.rssFeed.updateMany({
+        where: {
+          id: feed.id,
+          syncStatus: { notIn: ['SYNCING', 'PENDING'] }
+        },
+        data: {
+          syncStatus: 'PENDING',
+          nextSyncAt: null
+        }
       });
+
+      // Si le compte est 0, c'est qu'un autre worker a pris le relais entre-temps
+      if (lockResult.count === 0) continue;
+
+      // 2. Créer la tâche en file d'attente
+      await prisma.jobQueueItem.create({
+        data: {
+          queueName: 'rss-importer',
+          jobType: 'import-feed',
+          payload: { rssFeedId: feed.id },
+          status: 'PENDING'
+        }
+      });
+
       console.log(`[RSS Worker] Scheduled auto-sync for feed ${feed.id}`);
     }
   }
