@@ -3,6 +3,7 @@ import { slugify } from "../creator/creator-profile.service.js";
 import { MediaResolverService } from "../creator/media-resolver.service.js";
 import { AuditService } from "../../services/audit.service.js";
 import { PodcastOwnershipStatus, CreationSource, PodcastStatus, MediaSourceType } from "@prisma/client";
+import { AdminEpisodeService } from "./admin-episode.service.js";
 
 export class AdminCatalogService {
   static async getCatalog(filters: {
@@ -152,18 +153,27 @@ export class AdminCatalogService {
     if (data.slug !== undefined) updateData.slug = data.slug;
     if (data.description !== undefined) updateData.description = data.description;
     if (data.cover !== undefined) updateData.cover = data.cover;
-    if (data.status !== undefined) updateData.status = data.status;
     if (data.episodeNumber !== undefined) updateData.episodeNumber = data.episodeNumber ? Number(data.episodeNumber) : null;
-    
-    // Si l'épisode est publié pour la première fois
-    if (data.status === "PUBLISHED" && episode.status !== "PUBLISHED" && !episode.publishedAt) {
-      updateData.publishedAt = new Date();
+
+    // Transition vers PUBLISHED : délègue au service unifié avec validation de la checklist
+    if (data.status === "PUBLISHED" && episode.status !== "PUBLISHED") {
+      await AdminEpisodeService.publish(adminId, episode.id, { mode: "now" });
+    } else if (data.status === "DRAFT" && episode.status !== "DRAFT") {
+      updateData.status = "DRAFT";
+      await prisma.jobQueueItem.updateMany({
+        where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: episode.id } },
+        data: { status: "CANCELLED" },
+      }).catch(() => {});
     }
 
-    return prisma.episode.update({
-      where: { id: episode.id },
-      data: updateData,
-    });
+    if (Object.keys(updateData).length > 0) {
+      await prisma.episode.update({
+        where: { id: episode.id },
+        data: updateData,
+      });
+    }
+
+    return AdminEpisodeService.get(episode.id);
   }
 
   static async createAdminPodcast(

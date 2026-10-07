@@ -5,8 +5,53 @@ import { MarketService } from "../markets/market.service.js";
 import { EpisodeStatus, MediaType } from "@prisma/client";
 import { NotificationService } from "../../services/notification.service.js";
 import { ContentReviewService } from "../../services/content-review.service.js";
+import { EpisodePublishValidationService } from "../../services/episode-publish-validation.service.js";
 
 export class CreatorEpisodeService {
+  static async listAllEpisodes(
+    userId: string,
+    filters?: { podcastId?: string; status?: EpisodeStatus; search?: string }
+  ) {
+    const memberships = await prisma.podcastMember.findMany({
+      where: { userId },
+      select: { podcastId: true },
+    });
+    const allowedPodcastIds = memberships.map((m) => m.podcastId);
+    if (allowedPodcastIds.length === 0) return [];
+
+    const targetPodcastIds = filters?.podcastId
+      ? allowedPodcastIds.filter((id) => id === filters.podcastId)
+      : allowedPodcastIds;
+
+    if (targetPodcastIds.length === 0) return [];
+
+    const where: any = {
+      podcastId: { in: targetPodcastIds },
+      ...(filters?.status ? { status: filters.status } : {}),
+    };
+
+    if (filters?.search) {
+      where.OR = [
+        { title: { contains: filters.search, mode: "insensitive" } },
+        { description: { contains: filters.search, mode: "insensitive" } },
+      ];
+    }
+
+    return prisma.episode.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: {
+        podcast: {
+          select: { id: true, name: true, slug: true, cover: true, status: true },
+        },
+        mediaSources: {
+          include: { mediaAsset: true },
+        },
+        season: true,
+      },
+    });
+  }
+
   static async listEpisodes(userId: string, podcastId: string, status?: EpisodeStatus) {
     const member = await prisma.podcastMember.findUnique({
       where: { podcastId_userId: { podcastId, userId } },
@@ -20,7 +65,12 @@ export class CreatorEpisodeService {
       },
       orderBy: { createdAt: "desc" },
       include: {
-        mediaSources: true,
+        podcast: {
+          select: { id: true, name: true, slug: true, cover: true, status: true },
+        },
+        mediaSources: {
+          include: { mediaAsset: true },
+        },
         season: true,
         people: { include: { person: true } },
       },
@@ -147,7 +197,7 @@ export class CreatorEpisodeService {
   static async publishEpisode(userId: string, episodeId: string) {
     const episode = await prisma.episode.findUnique({
       where: { id: episodeId },
-      include: { podcast: true, mediaSources: true },
+      include: { podcast: true },
     });
     if (!episode) throw new Error("EPISODE_NOT_FOUND");
 
@@ -156,30 +206,17 @@ export class CreatorEpisodeService {
     });
     if (!member || member.role === "ANALYST") throw new Error("FORBIDDEN");
 
-    // Validation du Marché : La publication doit être activée dans le pays du podcast
-    const creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId } });
-    const canPublish = await MarketService.checkCapability(
-      episode.podcast.countryId,
-      "publishingEnabled",
-      creatorProfile?.id
-    );
+    // Validation unifiée de la checklist (titre, description, podcast actif, médias prêts, marché)
+    await EpisodePublishValidationService.assertCanPublish(episodeId, {
+      userId,
+      checkMarket: true,
+    });
 
-    if (!canPublish) {
-      throw new Error("MARKET_PUBLISHING_DISABLED");
-    }
-
-    if (!episode.title || !episode.description) {
-      throw new Error("VALIDATION_ERROR_MISSING_FIELDS");
-    }
-    if (episode.mediaSources.length === 0) {
-      throw new Error("VALIDATION_ERROR_NO_MEDIA_SOURCE");
-    }
-    // Un fichier encore en traitement ou en échec ne peut pas être publié.
-    const assetIds = episode.mediaSources.map((m) => m.mediaAssetId).filter((id): id is string => !!id);
-    if (assetIds.length) {
-      const notReady = await prisma.mediaAsset.count({ where: { id: { in: assetIds }, status: { not: "READY" } } });
-      if (notReady > 0) throw new Error("MEDIA_NOT_READY");
-    }
+    // Annule une éventuelle programmation précédente
+    await prisma.jobQueueItem.updateMany({
+      where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: episodeId } },
+      data: { status: "CANCELLED" },
+    }).catch(() => {});
 
     // Modération a priori (optionnelle) : l'épisode attend la validation de l'administration.
     if (await ContentReviewService.requiresReview(userId)) {
@@ -193,7 +230,7 @@ export class CreatorEpisodeService {
       where: { id: episodeId },
       data: {
         status: EpisodeStatus.PUBLISHED,
-        publishedAt: new Date(),
+        publishedAt: episode.publishedAt && episode.status === EpisodeStatus.PUBLISHED ? episode.publishedAt : new Date(),
       },
     });
     await NotificationService.notifyFollowersOfEpisode(episodeId);
@@ -203,7 +240,7 @@ export class CreatorEpisodeService {
   static async scheduleEpisode(userId: string, episodeId: string, publishAt: string) {
     const episode = await prisma.episode.findUnique({
       where: { id: episodeId },
-      include: { mediaSources: true },
+      include: { podcast: true },
     });
     if (!episode) throw new Error("EPISODE_NOT_FOUND");
 
@@ -213,9 +250,21 @@ export class CreatorEpisodeService {
     if (!member || member.role === "ANALYST") throw new Error("FORBIDDEN");
 
     const scheduledDate = new Date(publishAt);
-    if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
+    if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() <= Date.now() + 60_000) {
       throw new Error("INVALID_SCHEDULE_DATE");
     }
+
+    // Validation unifiée de la checklist (titre, description, podcast actif, médias prêts, marché)
+    await EpisodePublishValidationService.assertCanPublish(episodeId, {
+      userId,
+      checkMarket: true,
+    });
+
+    // Annule une éventuelle programmation précédente
+    await prisma.jobQueueItem.updateMany({
+      where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: episodeId } },
+      data: { status: "CANCELLED" },
+    }).catch(() => {});
 
     // Créateur soumis à validation : la date visée est conservée ; l'admin programmera à l'approbation.
     if (await ContentReviewService.requiresReview(userId)) {

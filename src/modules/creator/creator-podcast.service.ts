@@ -61,6 +61,7 @@ export class CreatorPodcastService {
       categoryIds?: string[];
       topicIds?: string[];
       website?: string;
+      status?: PodcastStatus;
     }
   ) {
     const countryCode = data.countryId || "ML";
@@ -86,6 +87,12 @@ export class CreatorPodcastService {
       slug = `${slugBase}-${count}`;
     }
 
+    const initialStatus = data.status
+      ? data.status
+      : (await ContentReviewService.requiresReview(userId))
+      ? PodcastStatus.PENDING_REVIEW
+      : PodcastStatus.DRAFT;
+
     const podcast = await prisma.podcast.create({
       data: {
         name: data.name,
@@ -96,7 +103,7 @@ export class CreatorPodcastService {
         banner: data.banner,
         countryId: countryCode,
         primaryLanguageCode: data.primaryLanguageCode || "fr",
-        status: (await ContentReviewService.requiresReview(userId)) ? PodcastStatus.PENDING_REVIEW : PodcastStatus.PUBLISHED,
+        status: initialStatus,
         ownershipStatus: "CLAIMED",
         creationSource: "CREATOR",
         website: data.website,

@@ -274,6 +274,7 @@ router.get("/organizations/:slug", async (req, res) => {
 });
 
 // --- UPLOAD MÉDIA NATIF ---
+router.post("/media/images/upload-url", authenticateToken, UploadController.createImageUploadUrl);
 router.post("/creator/uploads", authenticateToken, UploadController.createUploadSession);
 router.post("/creator/uploads/:id/complete", authenticateToken, UploadController.completeUploadSession);
 router.get("/creator/uploads/:id", authenticateToken, UploadController.getUploadSessionStatus);
@@ -298,6 +299,7 @@ router.get("/creator/podcasts/:id", authenticateToken, CreatorController.getPodc
 router.patch("/creator/podcasts/:id", authenticateToken, CreatorController.updatePodcast);
 router.delete("/creator/podcasts/:id", authenticateToken, CreatorController.archivePodcast);
 
+router.get("/creator/episodes", authenticateToken, CreatorController.listAllEpisodes);
 router.get("/creator/podcasts/:podcastId/episodes", authenticateToken, CreatorController.listEpisodes);
 router.post("/creator/podcasts/:podcastId/episodes", authenticateToken, CreatorController.createEpisode);
 router.post("/creator/episodes/:episodeId/media-sources", authenticateToken, CreatorController.addMediaSource);

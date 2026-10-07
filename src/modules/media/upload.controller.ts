@@ -4,6 +4,16 @@ import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 
 export class UploadController {
+  static async createImageUploadUrl(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await UploadService.createImageUploadUrl(req.user.id, req.body);
+      return sendSuccess(res, result, "URL de téléversement d'image générée.", 201);
+    } catch (error: any) {
+      return sendError(res, error.message, "IMAGE_UPLOAD_ERROR", 400);
+    }
+  }
+
   static async createUploadSession(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);

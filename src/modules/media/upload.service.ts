@@ -22,7 +22,47 @@ const EXT_BY_MIME: Record<string, string> = {
   "video/quicktime": "mov",
 };
 
+const ALLOWED_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const IMAGE_EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
 export class UploadService {
+  static async createImageUploadUrl(
+    userId: string,
+    params: {
+      mimeType: string;
+      folder?: "covers" | "banners" | "avatars";
+      sizeBytes?: number;
+    }
+  ) {
+    const mimeType = String(params.mimeType || "").toLowerCase().trim();
+    if (!ALLOWED_IMAGE_MIMES.includes(mimeType)) {
+      throw new Error("Format d'image non supporté (JPEG, PNG, WebP ou GIF uniquement).");
+    }
+
+    if (params.sizeBytes && params.sizeBytes > 10 * 1024 * 1024) {
+      throw new Error("L'image dépasse la limite de 10 Mo.");
+    }
+
+    const folder = params.folder || "covers";
+    const ext = IMAGE_EXT_BY_MIME[mimeType] || "jpg";
+    const key = `images/${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    const storage = StorageFactory.getProvider();
+    const presigned = await storage.createPresignedUploadUrl(key, mimeType, 3600);
+    const publicUrl = await storage.createPresignedDownloadUrl(key);
+
+    return {
+      uploadUrl: presigned.uploadUrl,
+      publicUrl,
+      storageKey: key,
+      expiresAt: presigned.expiresAt,
+    };
+  }
   static async createUploadSession(
     userId: string,
     params: {

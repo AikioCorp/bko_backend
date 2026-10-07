@@ -115,6 +115,20 @@ export class CreatorController {
   }
 
   // --- EPISODES ---
+  static async listAllEpisodes(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const episodes = await CreatorEpisodeService.listAllEpisodes(req.user.id, {
+        podcastId: req.query.podcastId as string | undefined,
+        status: req.query.status as any,
+        search: req.query.search as string | undefined,
+      });
+      return sendSuccess(res, episodes);
+    } catch (error: any) {
+      return creatorError(res, error);
+    }
+  }
+
   static async listEpisodes(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);

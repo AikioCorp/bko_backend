@@ -247,7 +247,7 @@ export class AdminEpisodeService {
       u.status = "DRAFT";
       await prisma.jobQueueItem.updateMany({
         where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: ep.id } },
-        data: { status: "CANCELED" as any },
+        data: { status: "CANCELLED" },
       }).catch(() => {});
     }
 
@@ -522,6 +522,10 @@ export class AdminEpisodeService {
 
   /** Publie maintenant ou programme (date ISO avec fuseau). */
   static async publish(adminId: string, idOrSlug: string, body: { mode: "now" | "schedule"; publishAt?: string }) {
+    if (body.mode !== "now" && body.mode !== "schedule") {
+      throw new AdminEpisodeError("INVALID_MODE", "Le mode de publication doit être 'now' ou 'schedule'.", 400);
+    }
+
     const { full, items, ready } = await this.checklist(idOrSlug);
     if (!ready) {
       const missing = items.filter((i) => !i.ok).map((i) => i.label);
@@ -531,7 +535,7 @@ export class AdminEpisodeService {
     // Annule une éventuelle programmation précédente.
     await prisma.jobQueueItem.updateMany({
       where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: full.id } },
-      data: { status: "CANCELED" as any },
+      data: { status: "CANCELLED" },
     }).catch(() => {});
 
     if (body.mode === "schedule") {
