@@ -2,7 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { slugify } from "../creator/creator-profile.service.js";
 import { MediaResolverService } from "../creator/media-resolver.service.js";
 import { AuditService } from "../../services/audit.service.js";
-import { PodcastOwnershipStatus, CreationSource, PodcastStatus } from "@prisma/client";
+import { PodcastOwnershipStatus, CreationSource, PodcastStatus, MediaSourceType } from "@prisma/client";
 
 export class AdminCatalogService {
   static async getCatalog(filters: {
@@ -103,7 +103,7 @@ export class AdminCatalogService {
         mediaSourceData = {
           create: [{
             type: resolved.type,
-            sourceType: "EXTERNAL",
+            sourceType: MediaSourceType.EXTERNAL,
             provider: resolved.provider,
             playbackMode: resolved.playbackMode,
             externalUrl: resolved.externalUrl,
@@ -257,10 +257,10 @@ export class AdminCatalogService {
     });
 
     if (data.categoryIds !== undefined && Array.isArray(data.categoryIds)) {
-      await prisma.podcastCategory.deleteMany({ where: { podcastId } });
+      await prisma.podcastCategory.deleteMany({ where: { podcastId: podcast.id } });
       if (data.categoryIds.length > 0) {
         await prisma.podcastCategory.createMany({
-          data: data.categoryIds.map((catId: string) => ({ podcastId, categoryId: catId })),
+          data: data.categoryIds.map((catId: string) => ({ podcastId: podcast.id, categoryId: catId })),
         });
       }
     }
@@ -269,7 +269,7 @@ export class AdminCatalogService {
       actorId: adminUserId,
       action: "PODCAST_UPDATED_ADMIN",
       entityType: "PODCAST",
-      entityId: podcastId,
+      entityId: podcast.id,
       previousState: podcast,
       newState: updated,
     });

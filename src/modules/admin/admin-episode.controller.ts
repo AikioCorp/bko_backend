@@ -114,7 +114,7 @@ export class AdminEpisodeController {
   static async publish(req: AuthenticatedRequest, res: Response) {
     try {
       const ep = await AdminEpisodeService.publish(req.user!.id, req.params.id, req.body);
-      return sendSuccess(res, ep, ep.status === "SCHEDULED" ? "Épisode programmé." : "Épisode publié.");
+      return sendSuccess(res, ep, ep?.status === "SCHEDULED" ? "Épisode programmé." : "Épisode publié.");
     } catch (e: any) {
       return AdminEpisodeController.handleError(res, e);
     }

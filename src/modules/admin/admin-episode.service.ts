@@ -206,7 +206,7 @@ export class AdminEpisodeService {
       },
     });
 
-    await AuditService.log({ actorUserId: adminId, action: "EPISODE_DRAFT_CREATED", targetType: "EPISODE", targetId: episode.id } as any).catch(() => {});
+    await AuditService.logAction({ actorId: adminId, action: "EPISODE_DRAFT_CREATED", entityType: "EPISODE", entityId: episode.id }).catch(() => {});
     return episode;
   }
 
@@ -544,7 +544,7 @@ export class AdminEpisodeService {
     } else {
       await prisma.episode.update({ where: { id: full.id }, data: { status: "PUBLISHED", publishedAt: full.publishedAt && full.status === "PUBLISHED" ? full.publishedAt : new Date() } });
     }
-    await AuditService.log({ actorUserId: adminId, action: body.mode === "schedule" ? "EPISODE_SCHEDULED" : "EPISODE_PUBLISHED", targetType: "EPISODE", targetId: full.id } as any).catch(() => {});
+    await AuditService.logAction({ actorId: adminId, action: body.mode === "schedule" ? "EPISODE_SCHEDULED" : "EPISODE_PUBLISHED", entityType: "EPISODE", entityId: full.id }).catch(() => {});
     return this.get(full.id);
   }
 }
