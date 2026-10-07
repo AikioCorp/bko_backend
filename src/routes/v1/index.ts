@@ -160,6 +160,26 @@ router.post("/admin/episodes/:id/youtube/check", authenticateToken, requirePermi
 router.delete("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.removeYoutube);
 router.post("/admin/episodes/:id/publish", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.publish);
 
+import { AdminEditorialController } from "../../modules/admin/admin-editorial.controller.js";
+
+// --- ADMIN EDITORIAL (Sélections & Collections) ---
+router.get("/admin/editorial/sections", authenticateToken, requirePermission("catalog.view"), AdminEditorialController.listSections);
+router.post("/admin/editorial/sections", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.createSection);
+router.post("/admin/editorial/sections/reorder", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.reorderSections);
+router.get("/admin/editorial/sections/:id", authenticateToken, requirePermission("catalog.view"), AdminEditorialController.getSection);
+router.patch("/admin/editorial/sections/:id", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.updateSection);
+router.post("/admin/editorial/sections/:id/items", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.addSectionItem);
+router.delete("/admin/editorial/sections/items/:itemId", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.removeSectionItem);
+router.post("/admin/editorial/sections/:id/items/reorder", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.reorderSectionItems);
+
+router.get("/admin/collections", authenticateToken, requirePermission("catalog.view"), AdminEditorialController.listCollections);
+router.post("/admin/collections", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.createCollection);
+router.get("/admin/collections/:id", authenticateToken, requirePermission("catalog.view"), AdminEditorialController.getCollection);
+router.patch("/admin/collections/:id", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.updateCollection);
+router.post("/admin/collections/:id/items", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.addCollectionItem);
+router.delete("/admin/collections/items/:itemId", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.removeCollectionItem);
+router.post("/admin/collections/:id/items/reorder", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.reorderCollectionItems);
+
 // Note : L'ancienne route POST /admin/podcasts/:id/episodes du AdminController est supplantée
 // On laisse l'ancienne /admin/episodes/:id en PUT pour l'instant (utilisée par la v1).
 router.put("/admin/episodes/:id", authenticateToken, requirePermission("catalog.edit"), AdminController.updateEpisode);

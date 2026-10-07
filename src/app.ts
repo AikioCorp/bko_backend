@@ -60,6 +60,16 @@ const limiter = rateLimit({
   },
 });
 
+// Root endpoint (Pour tests d'accès rapide & Coolify default)
+app.get("/", (req: express.Request, res: express.Response) => {
+  res.status(200).json({ name: "Bamako Podcast API", status: "ok", version: "1.0.0" });
+});
+
+// Healthcheck endpoint (Pour Coolify / Docker / Reverse Proxies)
+app.get("/health", (req: express.Request, res: express.Response) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 app.use("/api/v1", limiter, routesV1);
 
 // Error Handling fallback
