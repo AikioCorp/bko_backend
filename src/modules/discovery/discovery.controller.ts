@@ -16,19 +16,20 @@ export class DiscoveryController {
   static async getHome(req: Request, res: Response) {
     try {
       const country = (req.query.country as string) || "all";
-      const sections = await DiscoveryService.getHomeSections();
-      const trending = await DiscoveryService.getTrendingPodcasts(60, country);
-      
-      const latestEpisodes = await prisma.episode.findMany({
-        where: { status: "PUBLISHED" },
-        orderBy: { publishedAt: "desc" },
-        take: 10,
-        include: {
-          podcast: { select: { id: true, name: true, slug: true, cover: true } },
-          mediaSources: true,
-          language: true
-        }
-      });
+      const [sections, trending, latestEpisodes] = await Promise.all([
+        DiscoveryService.getHomeSections(),
+        DiscoveryService.getTrendingPodcasts(60, country),
+        prisma.episode.findMany({
+          where: { status: "PUBLISHED" },
+          orderBy: { publishedAt: "desc" },
+          take: 10,
+          include: {
+            podcast: { select: { id: true, name: true, slug: true, cover: true } },
+            mediaSources: true,
+            language: true
+          }
+        })
+      ]);
       
       const heroEpisode = latestEpisodes.length > 0 ? latestEpisodes[0] : null;
 

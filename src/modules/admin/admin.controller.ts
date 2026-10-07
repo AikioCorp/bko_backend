@@ -47,6 +47,19 @@ export class AdminController {
     }
   }
 
+  static async listAllEpisodes(req: AuthenticatedRequest, res: Response) {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const search = (req.query.search as string) || "";
+      const skip = (page - 1) * limit;
+      const result = await AdminCatalogService.listAllEpisodes(skip, limit, search);
+      return sendSuccess(res, result);
+    } catch (e: any) {
+      return sendError(res, e.message, "INTERNAL_ERROR", 500);
+    }
+  }
+
   static async listEpisodes(req: AuthenticatedRequest, res: Response) {
     try {
       const episodes = await AdminCatalogService.listEpisodes(req.params.id);

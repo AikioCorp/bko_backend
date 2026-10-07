@@ -953,7 +953,7 @@ model RssFeed {
   id                   String    @id @default(cuid())
   podcastId            String    @unique
   podcast              Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
-  url                  String
+  url                  String    @unique
   etag                 String?
   lastModified         String?
   lastSyncAt           DateTime?
@@ -962,11 +962,21 @@ model RssFeed {
   syncStatus           String    @default("IDLE")
   errorMessage         String?
 
+  // Synchronisation automatique (planifiée par le worker via nextSyncAt) et réglages d'import.
+  // importSettings : { importScope, newEpisodesTreatment, keepManualEdits } — null = comportement historique.
+  syncEnabled    Boolean @default(true)
+  importSettings Json?
+  // Auteur déclaré par le flux d'origine (conservé pour les émissions tierces).
+  sourceAuthor   String?
+
   syncRuns         RssSyncRun[]
   importedEpisodes RssImportedEpisode[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([url])
+  @@index([syncEnabled, nextSyncAt])
 }
 
 model RssSyncRun {

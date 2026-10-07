@@ -31,11 +31,19 @@ export class DiscoveryService {
     };
   }
 
+  
+  private static trendingCache: { data: any, timestamp: number, country: string } | null = null;
+  private static readonly CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
   /**
    * Calcul Déterministe des Tendances (Trending Algorithm)
-   * Score = (WeightDate * 0.4) + (RecentPlays * 2) + (QualifiedPlays * 3) + (Followers * 5)
    */
   static async getTrendingPodcasts(limit = 50, countryId?: string) {
+    const cacheKey = countryId || "all";
+    if (this.trendingCache && this.trendingCache.country === cacheKey && (Date.now() - this.trendingCache.timestamp) < this.CACHE_TTL) {
+      return this.trendingCache.data.slice(0, limit);
+    }
+
     const podcasts = await prisma.podcast.findMany({
       where: {
         status: "PUBLISHED",
@@ -85,10 +93,17 @@ export class DiscoveryService {
       };
     });
 
-    // Tri par score décroissant
+        // Tri par score décroissant
     scoredPodcasts.sort((a, b) => b.trendingScore - a.trendingScore);
+    const sortedPodcasts = scoredPodcasts.map((sp) => sp.podcast);
 
-    return scoredPodcasts.slice(0, limit).map((sp) => sp.podcast);
+    this.trendingCache = {
+      data: sortedPodcasts,
+      timestamp: Date.now(),
+      country: cacheKey
+    };
+
+    return sortedPodcasts.slice(0, limit);
   }
 
   /**

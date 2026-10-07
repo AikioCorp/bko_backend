@@ -10,7 +10,7 @@ async function runWorkerLoop() {
   while (true) {
     try {
       const mediaProcessed = await MediaWorkerService.processNextJob();
-      const rssProcessed = await RssWorkerService.processNextJob();
+      await RssWorkerService.scheduleAutoSyncs();\n      const rssProcessed = await RssWorkerService.processNextJob();
       const transcriptProcessed = await TranscriptWorkerService.processNextJob();
       const publishProcessed = await EpisodePublisherWorkerService.processNextJob();
       const emailProcessed = await EmailWorkerService.processNextJob();

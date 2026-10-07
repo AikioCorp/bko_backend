@@ -48,7 +48,7 @@ export class AdminCatalogService {
           primaryLanguage: true,
           categories: { include: { category: true } },
           rssFeed: true,
-          _count: { select: { episodes: true, followers: true, claims: true } },
+          _count: { select: { episodes: true } },
         },
       }),
       prisma.podcast.count({ where }),
@@ -130,6 +130,29 @@ export class AdminCatalogService {
         ...(mediaSourceData ? { mediaSources: mediaSourceData } : {})
       }
     });
+  }
+
+  static async listAllEpisodes(skip = 0, take = 50, search = "") {
+    const where = search ? {
+      OR: [
+        { title: { contains: search, mode: 'insensitive' as const } },
+        { podcast: { name: { contains: search, mode: 'insensitive' as const } } }
+      ]
+    } : {};
+    const [data, total] = await Promise.all([
+      prisma.episode.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        include: {
+          podcast: { select: { name: true, slug: true, cover: true } },
+          _count: { select: { histories: true } }
+        }
+      }),
+      prisma.episode.count({ where })
+    ]);
+    return { data, total };
   }
 
   static async listEpisodes(idOrSlug: string) {

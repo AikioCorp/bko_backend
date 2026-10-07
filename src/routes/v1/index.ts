@@ -141,6 +141,7 @@ router.post("/creator/episodes/:episodeId/chapters", authenticateToken, Transcri
 // --- BACKOFFICE ADMIN & CMS ÉDITORIAL ---
 router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
 router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
+router.get("/admin/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listAllEpisodes);
 router.get("/admin/catalog/health", authenticateToken, requirePermission("catalog.view"), AdminController.getContentHealth);
 router.get("/admin/podcasts/:id", authenticateToken, requirePermission("catalog.view"), AdminController.getPodcast);
 router.get("/admin/podcasts/:id/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listEpisodes);
