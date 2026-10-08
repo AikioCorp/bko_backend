@@ -329,8 +329,11 @@ model User {
   notificationPreference NotificationPreference?
   auditLogs              AuditLog[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  PodcastRating PodcastRating[]
+  EpisodeLike   EpisodeLike[]
+  Comment       Comment[]
 }
 
 model Role {
@@ -601,6 +604,7 @@ model Podcast {
 
   secondaryLanguages PodcastLanguage[]
   alternateTitles    PodcastAlternateTitle[]
+  ratings            PodcastRating[]
 
   categories       PodcastCategory[]
   topics           PodcastTopic[]
@@ -714,11 +718,12 @@ model Season {
 }
 
 model Episode {
-  id        String  @id @default(cuid())
-  podcastId String
-  podcast   Podcast @relation(fields: [podcastId], references: [id], onDelete: Cascade)
-  seasonId  String?
-  season    Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  allowComments Boolean @default(true)
+  id            String  @id @default(cuid())
+  podcastId     String
+  podcast       Podcast @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  seasonId      String?
+  season        Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
 
   slug             String
   title            String
@@ -757,8 +762,10 @@ model Episode {
   rssImportedEpisodes RssImportedEpisode[]
   uploadSessions      UploadSession[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  EpisodeLike EpisodeLike[]
+  Comment     Comment[]
 
   @@unique([podcastId, slug])
   @@index([publishedAt])
@@ -1390,6 +1397,7 @@ model Notification {
 
   @@index([userId, readAt, createdAt])
 }
+
 // ======================================================
 // TARIFS & STUDIO (OFFRES ET SERVICES)
 // ======================================================
@@ -1400,17 +1408,55 @@ enum OfferType {
 }
 
 model StudioOffer {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   type        OfferType
   name        String
   price       String
   unit        String?
-  description String   @db.Text
+  description String    @db.Text
   features    String[]
-  isPopular   Boolean  @default(false)
+  isPopular   Boolean   @default(false)
   iconName    String?
-  isActive    Boolean  @default(true)
-  order       Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isActive    Boolean   @default(true)
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// --- NOUVEAUX MODÈLES: LIKES, COMMENTAIRES & NOTES ---
+
+model PodcastRating {
+  id        String   @id @default(cuid())
+  podcastId String
+  podcast   Podcast  @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score     Int // 1 to 5
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([podcastId, userId])
+}
+
+model EpisodeLike {
+  id        String   @id @default(cuid())
+  episodeId String
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([episodeId, userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  episodeId String
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String   @db.Text
+  isVisible Boolean  @default(true) // For moderation
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

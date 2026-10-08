@@ -99,7 +99,7 @@ export class EpisodePublishValidationService {
       (s) => s.type === "AUDIO" && s.mediaAsset && (s.mediaAsset.status === "PROCESSING" || s.mediaAsset.status === "UPLOADING")
     );
     const playableVideo = episode.mediaSources.find(
-      (s) => s.type === "VIDEO" && s.status !== "EMBED_BLOCKED" && (s.externalUrl || s.externalId)
+      (s) => s.type === "VIDEO" && (!s.mediaAsset || s.mediaAsset.status === "READY") && s.status !== "EMBED_BLOCKED" && (s.externalUrl || s.externalId)
     );
 
     const hasPlayableSource = Boolean(playableAudio || playableVideo);

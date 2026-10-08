@@ -1,3 +1,6 @@
+import { StorageFactory } from "../../services/storage/storage.factory.js";
+import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
+import { EngagementController } from "../../modules/interactions/engagement.controller.js";
 import { Router } from "express";
 import { AuthController } from "../../modules/auth/auth.controller.js";
 import { UserController } from "../../modules/users/user.controller.js";
@@ -72,13 +75,19 @@ const playLimiter = rateLimit({
   message: { success: false, error: { code: "TOO_MANY_REQUESTS", message: "Trop d'évènements d'écoute." } },
 });
 
-// Stockage local de développement : la route reçoit (et jette) le fichier envoyé par l'URL présignée
-// factice, pour que le parcours d'upload soit testable sans Cloudflare R2. Jamais en production.
-if (process.env.NODE_ENV !== "production" && !process.env.R2_ENDPOINT) {
-  router.put("/mock-storage/upload", (req, res) => {
-    req.resume();
-    req.on("end", () => res.status(200).send("OK"));
-    req.on("error", () => res.status(500).end());
+// Local development uploads are saved to disk, including audio/video range playback.
+if (process.env.NODE_ENV !== "production") {
+  router.put("/mock-storage/upload", async (req, res) => {
+    const storage=StorageFactory.getProvider();
+    if(!(storage instanceof LocalMockStorageProvider)) {res.sendStatus(404);return;}
+    try {await storage.receiveUpload(String(req.query.token || ""),req);res.status(200).send("OK");}
+    catch {if(!res.headersSent) res.status(400).json({success:false,message:"Transfert local refusé ou incomplet."});}
+  });
+  router.get("/mock-storage/file", (req,res) => {
+    const storage=StorageFactory.getProvider();
+    if(!(storage instanceof LocalMockStorageProvider)) {res.sendStatus(404);return;}
+    try {res.sendFile(storage.filePath(String(req.query.key || "")),error=>{if(error && !res.headersSent) res.sendStatus(404);});}
+    catch {res.sendStatus(400);}
   });
 }
 
@@ -154,6 +163,7 @@ router.patch("/admin/episodes/:id", authenticateToken, requirePermission("catalo
 router.post("/admin/episodes/:id/audio/uploads", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.createAudioUpload);
 router.post("/admin/episodes/:id/audio/uploads/:uploadId/complete", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.completeAudioUpload);
 router.post("/admin/episodes/:id/audio/url", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.setAudioUrl);
+router.delete("/admin/episodes/:id", authenticateToken, requirePermission("catalog.delete"), AdminEpisodeController.remove);
 router.delete("/admin/episodes/:id/audio", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.removeAudio);
 router.post("/admin/media/youtube/preview", authenticateToken, requirePermission("catalog.view"), AdminEpisodeController.previewYoutube);
 router.post("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.setYoutube);
@@ -395,5 +405,20 @@ router.get("/admin/studio-offers", authenticateToken, StudioOfferController.getA
 router.post("/admin/studio-offers", authenticateToken, StudioOfferController.createOffer);
 router.patch("/admin/studio-offers/:id", authenticateToken, StudioOfferController.updateOffer);
 router.delete("/admin/studio-offers/:id", authenticateToken, StudioOfferController.deleteOffer);
+
+
+// --- ENGAGEMENT (Likes, Ratings, Comments) ---
+router.get("/podcasts/:id/ratings", optionalAuthenticateToken, EngagementController.getPodcastRatings);
+router.post("/podcasts/:id/ratings", authenticateToken, EngagementController.ratePodcast);
+router.delete("/podcasts/:id/ratings", authenticateToken, EngagementController.deletePodcastRating);
+
+router.post("/episodes/:id/likes", authenticateToken, EngagementController.likeEpisode);
+router.delete("/episodes/:id/likes", authenticateToken, EngagementController.unlikeEpisode);
+
+router.get("/episodes/:id/comments", optionalAuthenticateToken, EngagementController.listComments);
+router.post("/episodes/:id/comments", authenticateToken, accountLimiter(20), EngagementController.createComment);
+router.delete("/comments/:id", authenticateToken, EngagementController.deleteComment);
+
+router.patch("/creator/episodes/:episodeId/comments-settings", authenticateToken, EngagementController.updateCommentSettings);
 
 export default router;

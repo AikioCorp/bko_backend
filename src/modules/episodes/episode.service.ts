@@ -34,6 +34,9 @@ export class EpisodeService {
             topic: true,
           },
         },
+        _count: {
+          select: { EpisodeLike: true, Comment: { where: { isVisible: true } } }
+        },
         transcripts: {
           where: { type: "ORIGINAL" },
           include: {

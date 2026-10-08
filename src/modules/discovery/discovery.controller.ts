@@ -20,7 +20,7 @@ export class DiscoveryController {
         DiscoveryService.getHomeSections(),
         DiscoveryService.getTrendingPodcasts(60, country),
         prisma.episode.findMany({
-          where: { status: "PUBLISHED" },
+          where: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } },
           orderBy: { publishedAt: "desc" },
           take: 10,
           include: {
@@ -43,6 +43,7 @@ export class DiscoveryController {
       const popularEpisodes = await prisma.episode.findMany({
         where: { 
           status: "PUBLISHED",
+          podcast: { status: "PUBLISHED" },
           publishedAt: { gte: oneWeekAgo }
         },
         orderBy: { histories: { _count: "desc" } },

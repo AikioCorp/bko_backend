@@ -4,6 +4,15 @@ import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 
 export class AdminEpisodeController {
+  static async remove(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await AdminEpisodeService.remove(req.user!.id, req.params.id);
+      return sendSuccess(res, result, "Épisode supprimé.");
+    } catch (e: any) {
+      return AdminEpisodeController.handleError(res, e);
+    }
+  }
+
   private static handleError(res: Response, e: any) {
     if (e instanceof AdminEpisodeError) {
       return sendError(res, e.message, e.code, e.status);

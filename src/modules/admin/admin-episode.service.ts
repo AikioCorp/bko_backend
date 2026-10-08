@@ -23,6 +23,9 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/wav": "wav",
   "audio/x-wav": "wav",
   "audio/ogg": "ogg",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
 };
 const BLOCKED_AUDIO_HOSTS = ["youtube.com", "youtu.be", "spotify.com", "deezer.com", "soundcloud.com", "apple.com", "vimeo.com"];
 const EPISODE_TYPES: EpisodeType[] = ["FULL", "TRAILER", "BONUS"];
@@ -143,6 +146,19 @@ const describeSources = async (episodeId: string) => {
 };
 
 export class AdminEpisodeService {
+  static async remove(adminId: string, idOrSlug: string) {
+    const episode = await findEpisode(idOrSlug);
+    await prisma.$transaction(async tx => {
+      await tx.jobQueueItem.updateMany({
+        where: { status: "PENDING", payload: { path: ["episodeId"], equals: episode.id } },
+        data: { status: "CANCELLED" },
+      });
+      await tx.episode.delete({ where: { id: episode.id } });
+    });
+    await AuditService.logAction({ actorId: adminId, action: "EPISODE_DELETED", entityType: "EPISODE", entityId: episode.id }).catch(() => {});
+    return { id: episode.id };
+  }
+
   /** Récupère l'épisode, son podcast et l'état de ses sources. */
   static async get(idOrSlug: string) {
     const ep = await prisma.episode.findFirst({
@@ -157,7 +173,7 @@ export class AdminEpisodeService {
             status: true,
             primaryLanguageCode: true,
             categories: { include: { category: true } },
-            rssFeed: { select: { id: true, url: true, lastFetchedAt: true, status: true } as any },
+            rssFeed: { select: { id: true, url: true, lastSyncAt: true, syncStatus: true } },
           },
         },
         season: true,
@@ -165,7 +181,7 @@ export class AdminEpisodeService {
         mediaSources: true,
         transcripts: true,
         chapters: { orderBy: { startTimeMs: "asc" } },
-        rssImportedEpisodes: { take: 1, orderBy: { createdAt: "desc" } as any },
+        rssImportedEpisodes: { take: 1, orderBy: [{ sourcePublishedAt: "desc" }, { id: "desc" }] },
       },
     });
     if (!ep) return null;
@@ -258,15 +274,18 @@ export class AdminEpisodeService {
   // ---------------------------------------------------------------- AUDIO
 
   /** Prépare un envoi direct vers le stockage (URL présignée temporaire). */
-  static async createAudioUpload(adminId: string, idOrSlug: string, body: { filename: string; mimeType: string; sizeBytes: number }) {
+  static async createAudioUpload(adminId: string, idOrSlug: string, body: { filename: string; mimeType: string; sizeBytes: number; mediaType?: "AUDIO" | "VIDEO" }) {
     const ep = await findEpisode(idOrSlug);
     const mimeType = String(body.mimeType || "").toLowerCase();
     const sizeBytes = Number(body.sizeBytes || 0);
-    if (!ALLOWED_AUDIO_MIMES.includes(mimeType)) throw new AdminEpisodeError("INVALID_MEDIA_TYPE", "Format non pris en charge (MP3, M4A, AAC, WAV ou OGG).");
-    if (!sizeBytes || sizeBytes > MAX_AUDIO_BYTES) throw new AdminEpisodeError("FILE_TOO_LARGE", "Le fichier dépasse 250 Mo.");
+    const mediaType = body.mediaType ?? "AUDIO";
+    const isVideo = mediaType === "VIDEO";
+    if (mediaType !== "AUDIO" && mediaType !== "VIDEO") throw new AdminEpisodeError("INVALID_MEDIA_TYPE", "Type de média invalide.");
+    if (!(isVideo ? ["video/mp4", "video/webm", "video/quicktime"] : ALLOWED_AUDIO_MIMES).includes(mimeType)) throw new AdminEpisodeError("INVALID_MEDIA_TYPE", "Format de fichier non pris en charge.");
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > (isVideo ? 2000 * 1024 * 1024 : MAX_AUDIO_BYTES)) throw new AdminEpisodeError("FILE_TOO_LARGE", "Taille du fichier invalide ou supérieure à la limite autorisée.");
 
     const d = new Date();
-    const key = `media/episodes/${ep.id}/${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}/audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${EXT_BY_MIME[mimeType] ?? "mp3"}`;
+    const key = `media/episodes/${ep.id}/${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}/${mediaType.toLowerCase()}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${EXT_BY_MIME[mimeType] ?? "mp3"}`;
 
     const storage = StorageFactory.getProvider();
     const presigned = await storage.createPresignedUploadUrl(key, mimeType, 3600);
@@ -275,7 +294,7 @@ export class AdminEpisodeService {
       data: {
         userId: adminId,
         episodeId: ep.id,
-        mediaType: "AUDIO",
+        mediaType,
         originalFilename: String(body.filename || "audio").slice(0, 200),
         mimeType,
         sizeBytes: BigInt(sizeBytes),
@@ -321,7 +340,7 @@ export class AdminEpisodeService {
         queueName: "media-processing",
         jobType: "MEDIA_ANALYZE",
         // replaceAudio : l'ancienne version audio n'est retirée qu'une fois la nouvelle prête.
-        payload: { mediaAssetId: asset.id, episodeId: ep.id, mediaType: "AUDIO", replaceAudio: true },
+        payload: { mediaAssetId: asset.id, episodeId: ep.id, mediaType: session.mediaType, replaceAudio: session.mediaType === "AUDIO" },
       },
     });
     return this.get(ep.id);
@@ -507,12 +526,13 @@ export class AdminEpisodeService {
     if (!full) throw new AdminEpisodeError("EPISODE_NOT_FOUND", "Épisode introuvable", 404);
     const s = full.sources;
     const audioBusy = s.audioState === "UPLOADING" || s.audioState === "PROCESSING";
-    const hasPlayable = Boolean(s.audio) || Boolean(s.youtube && s.youtube.status !== "EMBED_BLOCKED");
+    const videoReady = full.mediaSources.some(source => source.type === "VIDEO" && source.status !== "EMBED_BLOCKED" && Boolean(source.externalUrl || source.externalId));
+    const hasPlayable = Boolean(s.audio) || videoReady;
     const podcastOpen = !["SUSPENDED", "ARCHIVED"].includes(full.podcast.status);
     const items = [
       { key: "title", label: "Titre renseigné", ok: Boolean(full.title?.trim()) && full.title !== "Nouvel épisode" },
       { key: "podcast", label: "Podcast sélectionné", ok: Boolean(full.podcastId) },
-      { key: "language", label: "Langue renseignée", ok: Boolean(full.languageCode) },
+      { key: "language", label: "Langue renseignée", ok: Boolean(full.languageCode || full.podcast.primaryLanguageCode) },
       { key: "source", label: "Une source de lecture disponible", ok: hasPlayable },
       { key: "processing", label: "Traitement audio terminé", ok: !audioBusy },
       { key: "podcastStatus", label: "Podcast actif (ni suspendu ni archivé)", ok: podcastOpen },
@@ -529,25 +549,25 @@ export class AdminEpisodeService {
     const { full, items, ready } = await this.checklist(idOrSlug);
     if (!ready) {
       const missing = items.filter((i) => !i.ok).map((i) => i.label);
-      throw new AdminEpisodeError("NOT_READY", `Publication impossible : ${missing.join(", ")}.`, 422);
+      throw new AdminEpisodeError("NOT_READY", `Publication impossible : ${missing.join(", ")}.${missing.includes("Une source de lecture disponible") ? " Ouvrez Modifier et ajoutez un fichier audio, vidéo ou un lien de lecture avant de publier." : ""}`, 422);
     }
 
-    // Annule une éventuelle programmation précédente.
-    await prisma.jobQueueItem.updateMany({
-      where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: full.id } },
-      data: { status: "CANCELLED" },
-    }).catch(() => {});
-
-    if (body.mode === "schedule") {
-      const at = new Date(String(body.publishAt || ""));
-      if (isNaN(at.getTime()) || at.getTime() <= Date.now() + 60_000) {
-        throw new AdminEpisodeError("INVALID_DATE", "Choisissez une date future (au moins une minute après maintenant).");
-      }
-      await prisma.episode.update({ where: { id: full.id }, data: { status: "SCHEDULED", publishedAt: at } });
-      await prisma.jobQueueItem.create({ data: { queueName: "episodes-publisher", jobType: "PUBLISH_EPISODE", payload: { episodeId: full.id }, runAt: at } });
-    } else {
-      await prisma.episode.update({ where: { id: full.id }, data: { status: "PUBLISHED", publishedAt: full.publishedAt && full.status === "PUBLISHED" ? full.publishedAt : new Date() } });
+    const at = body.mode === "schedule" ? new Date(String(body.publishAt || "")) : null;
+    if (at && (isNaN(at.getTime()) || at.getTime() <= Date.now() + 60_000)) {
+      throw new AdminEpisodeError("INVALID_DATE", "Choisissez une date future (au moins une minute après maintenant).");
     }
+    await prisma.$transaction(async tx => {
+      await tx.jobQueueItem.updateMany({
+        where: { queueName: "episodes-publisher", status: "PENDING", payload: { path: ["episodeId"], equals: full.id } },
+        data: { status: "CANCELLED" },
+      });
+      await tx.episode.update({ where: { id: full.id }, data: {
+        status: at ? "SCHEDULED" : "PUBLISHED",
+        publishedAt: at || (full.publishedAt && full.status === "PUBLISHED" ? full.publishedAt : new Date()),
+        languageCode: full.languageCode || full.podcast.primaryLanguageCode,
+      } });
+      if (at) await tx.jobQueueItem.create({ data: { queueName: "episodes-publisher", jobType: "PUBLISH_EPISODE", payload: { episodeId: full.id }, runAt: at } });
+    });
     await AuditService.logAction({ actorId: adminId, action: body.mode === "schedule" ? "EPISODE_SCHEDULED" : "EPISODE_PUBLISHED", entityType: "EPISODE", entityId: full.id }).catch(() => {});
     return this.get(full.id);
   }
