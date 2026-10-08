@@ -100,8 +100,8 @@ export class PodcastService {
 
     if (podcasts.length > limit) {
       hasMore = true;
-      const nextItem = podcasts.pop();
-      nextCursor = nextItem?.id || null;
+      podcasts.pop();
+      nextCursor = podcasts[podcasts.length - 1]?.id || null;
     }
 
     const formattedPodcasts = podcasts.map((p) => ({

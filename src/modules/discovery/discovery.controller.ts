@@ -16,19 +16,20 @@ export class DiscoveryController {
   static async getHome(req: Request, res: Response) {
     try {
       const country = (req.query.country as string) || "all";
-      const [sections, trending, latestEpisodes] = await Promise.all([
+      const [sections, trending, latestEpisodes, categoryShelves] = await Promise.all([
         DiscoveryService.getHomeSections(),
         DiscoveryService.getTrendingPodcasts(60, country),
         prisma.episode.findMany({
-          where: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } },
+          where: { status: "PUBLISHED", podcast: { status: "PUBLISHED", ...(country !== "all" ? {countryId: country} : {}) } },
           orderBy: { publishedAt: "desc" },
-          take: 10,
+          take: 24,
           include: {
             podcast: { select: { id: true, name: true, slug: true, cover: true, categories: { include: { category: true } } } },
             mediaSources: true,
             language: true
           }
-        })
+        }),
+        DiscoveryService.getCategoryShelves(country)
       ]);
       
       
@@ -88,7 +89,8 @@ export class DiscoveryController {
         sections,
         trending,
         latestEpisodes,
-        heroEpisode
+        heroEpisode,
+        categoryShelves,
       });
     } catch (error: any) {
       return sendError(res, error.message || "Erreur lors de la récupération de la page d'accueil.");

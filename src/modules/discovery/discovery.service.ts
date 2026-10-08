@@ -2,6 +2,23 @@ import { prisma } from "../../config/prisma.js";
 import { formatEpisodeWithMediaFlags } from "../../utils/episode.js";
 
 export class DiscoveryService {
+  static async getCategoryShelves(countryId = "all") {
+    const published = { status: "PUBLISHED" as const, ...(countryId !== "all" ? {countryId} : {}), episodes: {some: {status: "PUBLISHED" as const}} };
+    const categories = await prisma.category.findMany({
+      where: {podcasts: {some: {podcast: published}}},
+      orderBy: {name: "asc"},
+      take: 12,
+      include: {
+        _count: {select: {podcasts: {where: {podcast: published}}}},
+        podcasts: {where: {podcast: published},take: 8,orderBy: {podcast: {updatedAt: "desc"}},include: {podcast: {
+          include: {primaryLanguage: true, country: true, categories: {include: {category: true}},
+            _count: {select: {episodes: {where: {status: "PUBLISHED"}},followers: true}}}
+        }}}
+      }
+    });
+    return categories.map(category => ({id:category.id,slug:category.slug,name:category.name,count:category._count.podcasts,podcasts:category.podcasts.map(item=>item.podcast)}));
+  }
+
   static async getExploreData() {
     const [countries, languages, categories, topics] = await Promise.all([
       prisma.country.findMany({
@@ -45,13 +62,14 @@ export class DiscoveryService {
     }
 
     // Agrégation optimisée en base pour les statistiques (Évite le crash mémoire)
-    const episodeStats = await prisma.$queryRaw`SELECT "episodeId", SUM("plays") as plays, SUM("qualifiedPlays") as qualifiedPlays FROM "EpisodeDailyStats" GROUP BY "episodeId"` as any[];
+    const episodeStats = await prisma.$queryRaw`SELECT stats."episodeId", SUM(stats."plays") as plays, SUM(stats."qualifiedPlays") as "qualifiedPlays" FROM "EpisodeDailyStats" stats JOIN "Episode" ep ON ep.id = stats."episodeId" JOIN "Podcast" podcast ON podcast.id = ep."podcastId" WHERE stats.date >= CURRENT_DATE - INTERVAL '30 days' AND ep.status = 'PUBLISHED' AND podcast.status = 'PUBLISHED' GROUP BY stats."episodeId"` as any[];
     
     const statsMap = new Map(episodeStats.map(s => [s.episodeId, { plays: Number(s.plays) || 0, qualified: Number(s.qualifiedplays || s.qualifiedPlays) || 0 }]));
 
     const podcasts = await prisma.podcast.findMany({
       where: {
         status: "PUBLISHED",
+        episodes: {some: {status: "PUBLISHED"}},
         ...(countryId && countryId !== "all" ? { countryId } : {}),
       },
       include: {
@@ -64,7 +82,7 @@ export class DiscoveryService {
           take: 5,
           select: { id: true }
         },
-        _count: { select: { episodes: true, followers: true } },
+        _count: { select: { episodes: {where: {status: "PUBLISHED"}}, followers: true } },
       },
     });
 
@@ -133,7 +151,7 @@ export class DiscoveryService {
                 country: true,
                 primaryLanguage: true,
                 categories: { include: { category: true } },
-                _count: { select: { episodes: true, followers: true } },
+                _count: { select: { episodes: {where: {status: "PUBLISHED"}}, followers: true } },
               },
             },
             episode: {

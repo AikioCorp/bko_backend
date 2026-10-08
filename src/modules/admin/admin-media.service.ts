@@ -27,7 +27,7 @@ export class AdminMediaService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          owner: { select: { name: true, email: true } }
+          owner: { select: { fullName: true, email: true } }
         }
       }),
       prisma.mediaAsset.count({ where })

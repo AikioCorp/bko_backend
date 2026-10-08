@@ -8,6 +8,7 @@ test("home latest and featured episodes require a published parent podcast", asy
   const original = prisma.episode.findMany;
   const sections = DiscoveryService.getHomeSections;
   const trending = DiscoveryService.getTrendingPodcasts;
+  const shelves = DiscoveryService.getCategoryShelves;
   let queries = 0;
   let response: any;
   (prisma.episode as any).findMany = async (query: any) => {
@@ -18,6 +19,7 @@ test("home latest and featured episodes require a published parent podcast", asy
   };
   DiscoveryService.getHomeSections = async () => [];
   DiscoveryService.getTrendingPodcasts = async () => [];
+  DiscoveryService.getCategoryShelves = async () => [];
   const res: any = { status() { return this; }, json(data: any) { response = data; return this; } };
   try {
     await DiscoveryController.getHome({ query: {} } as any, res);
@@ -29,5 +31,6 @@ test("home latest and featured episodes require a published parent podcast", asy
     prisma.episode.findMany = original;
     DiscoveryService.getHomeSections = sections;
     DiscoveryService.getTrendingPodcasts = trending;
+    DiscoveryService.getCategoryShelves = shelves;
   }
 });
