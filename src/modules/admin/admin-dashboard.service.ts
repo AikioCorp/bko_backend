@@ -2,21 +2,14 @@ import { prisma } from "../../config/prisma.js";
 
 export class AdminDashboardService {
   static async getDashboardMetrics() {
-    const [
-      usersCount,
-      creatorsCount,
-      podcastsCount,
-      episodesCount,
-      unclaimedPodcastsCount,
-      pendingClaimsCount,
-      openReportsCount,
-      rssErrorsCount,
-      mediaErrorsCount,
-    ] = await Promise.all([
+    const [usersCount, creatorsCount, podcastsCount, episodesCount] = await Promise.all([
       prisma.user.count(),
       prisma.creatorProfile.count(),
       prisma.podcast.count(),
       prisma.episode.count(),
+    ]);
+
+    const [unclaimedPodcastsCount, pendingClaimsCount, openReportsCount, rssErrorsCount, mediaErrorsCount] = await Promise.all([
       prisma.podcast.count({ where: { ownershipStatus: "UNCLAIMED" } }),
       prisma.claim.count({ where: { status: "PENDING" } }),
       prisma.report.count({ where: { status: "OPEN" } }),

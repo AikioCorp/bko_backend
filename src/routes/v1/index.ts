@@ -365,7 +365,7 @@ router.get("/search", SearchController.search);
 router.get("/search/suggestions", SearchController.suggestions);
 
 router.get("/explore", DiscoveryController.getExplore);
-router.get("/home", DiscoveryController.getHome);
+router.get("/home", optionalAuthenticateToken, DiscoveryController.getHome);
 router.get("/trending", DiscoveryController.getTrending);
 
 router.get("/podcasts", PodcastController.listPodcasts);

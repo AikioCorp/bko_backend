@@ -389,28 +389,37 @@ export class AdminConsoleService {
   static async getOverview() {
     const since7 = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     const since24h = new Date(Date.now() - 24 * 3600 * 1000);
+    // On limite le parallélisme pour ne pas exploser le pool de connexions (default: 10)
     const [
       episodesPublished,
       episodesThisWeek,
       pendingEpisodes,
       pendingPodcasts,
-      pendingCreatorAccess,
-      openReports,
-      reportsByReason,
-      activeListeners24h,
-      plays7d,
-      storage,
-      failedJobs,
-      recentAudit,
     ] = await Promise.all([
       prisma.episode.count({ where: { status: "PUBLISHED" } }),
       prisma.episode.count({ where: { status: "PUBLISHED", publishedAt: { gte: since7 } } }),
       prisma.episode.count({ where: { status: "PENDING_REVIEW" } }),
       prisma.podcast.count({ where: { status: "PENDING_REVIEW" } }),
+    ]);
+
+    const [
+      pendingCreatorAccess,
+      openReports,
+      reportsByReason,
+      activeListeners24h,
+    ] = await Promise.all([
       prisma.creatorMarketAccess.count({ where: { status: "PENDING" } }),
       prisma.report.count({ where: { status: { in: ["OPEN", "IN_REVIEW"] } } }),
       prisma.report.groupBy({ by: ["reason"], where: { status: { in: ["OPEN", "IN_REVIEW"] } }, _count: { id: true } }),
       prisma.playbackHistory.groupBy({ by: ["userId"], where: { lastPlayedAt: { gte: since24h } } }).then((r) => r.length),
+    ]);
+
+    const [
+      plays7d,
+      storage,
+      failedJobs,
+      recentAudit,
+    ] = await Promise.all([
       prisma.episodeDailyStats.aggregate({ where: { date: { gte: since7 } }, _sum: { plays: true } }),
       prisma.mediaAsset.aggregate({ where: { status: { not: "DELETED" } }, _sum: { sizeBytes: true } }),
       prisma.jobQueueItem.count({ where: { status: "FAILED" } }),
