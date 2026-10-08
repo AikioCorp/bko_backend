@@ -37,7 +37,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
             { alternateTitles: { some: { title: { contains: searchTerm, mode: "insensitive" } } } },
           ],
@@ -56,7 +56,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { title: { contains: searchTerm, mode: "insensitive" } },
+            { title: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
           ],
         },
@@ -71,7 +71,7 @@ export class SearchService {
       prisma.person.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -87,7 +87,7 @@ export class SearchService {
       prisma.topic.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
@@ -103,7 +103,7 @@ export class SearchService {
       prisma.organization.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
           ],
         },
@@ -173,7 +173,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { alternateTitles: { some: { title: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -183,7 +183,7 @@ export class SearchService {
       prisma.person.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -193,7 +193,7 @@ export class SearchService {
       prisma.topic.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },

@@ -36,13 +36,18 @@ export class DiscoveryService {
   private static readonly CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
   /**
-   * Calcul Déterministe des Tendances (Trending Algorithm)
+   * Calcul DǸterministe des Tendances (Trending Algorithm)
    */
   static async getTrendingPodcasts(limit = 50, countryId?: string) {
     const cacheKey = countryId || "all";
     if (this.trendingCache && this.trendingCache.country === cacheKey && (Date.now() - this.trendingCache.timestamp) < this.CACHE_TTL) {
       return this.trendingCache.data.slice(0, limit);
     }
+
+    // Agrégation optimisée en base pour les statistiques (Évite le crash mémoire)
+    const episodeStats = await prisma.$queryRaw`SELECT "episodeId", SUM("plays") as plays, SUM("qualifiedPlays") as qualifiedPlays FROM "EpisodeDailyStats" GROUP BY "episodeId"` as any[];
+    
+    const statsMap = new Map(episodeStats.map(s => [s.episodeId, { plays: Number(s.plays) || 0, qualified: Number(s.qualifiedplays || s.qualifiedPlays) || 0 }]));
 
     const podcasts = await prisma.podcast.findMany({
       where: {
@@ -57,31 +62,30 @@ export class DiscoveryService {
           where: { status: "PUBLISHED" },
           orderBy: { publishedAt: "desc" },
           take: 5,
-          include: {
-            dailyStats: true,
-          },
+          select: { id: true }
         },
         _count: { select: { episodes: true, followers: true } },
       },
     });
 
-    // Calcul du score déterministe pour chaque podcast
+    // Calcul du score dǸterministe pour chaque podcast
     const scoredPodcasts = podcasts.map((p) => {
       let totalPlays = 0;
       let totalQualified = 0;
 
       p.episodes.forEach((ep) => {
-        ep.dailyStats.forEach((stat) => {
+        const stat = statsMap.get(ep.id);
+        if (stat) {
           totalPlays += stat.plays;
-          totalQualified += stat.qualifiedPlays;
-        });
+          totalQualified += stat.qualified;
+        }
       });
 
       const followersScore = p._count.followers * 5;
       const playsScore = totalPlays * 2;
       const qualifiedScore = totalQualified * 3;
 
-      // Bonus de récence (si créé dans les 30 derniers jours)
+      // Bonus de rǸcence (si crǸǸ dans les 30 derniers jours)
       const ageDays = (Date.now() - new Date(p.createdAt).getTime()) / (1000 * 3600 * 24);
       const recencyBonus = ageDays < 30 ? Math.max(0, 500 - ageDays * 15) : 0;
 
@@ -93,7 +97,7 @@ export class DiscoveryService {
       };
     });
 
-        // Tri par score décroissant
+        // Tri par score dǸcroissant
     scoredPodcasts.sort((a, b) => b.trendingScore - a.trendingScore);
     const sortedPodcasts = scoredPodcasts.map((sp) => sp.podcast);
 
@@ -146,7 +150,7 @@ export class DiscoveryService {
       },
     });
 
-    // Masquer automatiquement les sections vides et formater les épisodes
+    // Masquer automatiquement les sections vides et formater les Ǹpisodes
     const activeSections = sections
       .filter((s) => s.items && s.items.length > 0)
       .map((s) => ({
@@ -156,7 +160,7 @@ export class DiscoveryService {
             ...item,
             episode: item.episode ? formatEpisodeWithMediaFlags(item.episode) : null,
           }))
-          // Un élément éditorial dont le podcast/épisode n'est plus publié disparaît de l'accueil.
+          // Un ǸlǸment Ǹditorial dont le podcast/Ǹpisode n'est plus publiǸ disparaǩt de l'accueil.
           .filter((item) => {
             if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
             if (item.episode && (item.episode.status !== "PUBLISHED" || item.episode.podcast.status !== "PUBLISHED")) return false;

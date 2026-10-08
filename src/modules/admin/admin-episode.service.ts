@@ -181,6 +181,7 @@ export class AdminEpisodeService {
         mediaSources: true,
         transcripts: true,
         chapters: { orderBy: { startTimeMs: "asc" } },
+          topics: { include: { topic: true } },
         rssImportedEpisodes: { take: 1, orderBy: [{ sourcePublishedAt: "desc" }, { id: "desc" }] },
       },
     });
@@ -241,6 +242,28 @@ export class AdminEpisodeService {
     if (data.slug !== undefined && data.slug) u.slug = await uniqueSlug(ep.podcastId, data.slug, ep.id);
 
     // Saison : numéro saisi → saison existante ou créée à la volée.
+    
+    if (data.topicNames !== undefined && Array.isArray(data.topicNames)) {
+      const topicIds = [];
+      for (const tName of data.topicNames) {
+        const name = String(tName).trim();
+        if (!name) continue;
+        const slug = slugifyTitle(name);
+        if (!slug) continue;
+        let topic = await prisma.topic.findUnique({ where: { slug } });
+        if (!topic) {
+          topic = await prisma.topic.create({ data: { name, slug } });
+        }
+        topicIds.push(topic.id);
+      }
+      await prisma.episodeTopic.deleteMany({ where: { episodeId: ep.id } });
+      if (topicIds.length > 0) {
+        await prisma.episodeTopic.createMany({
+          data: topicIds.map(tid => ({ episodeId: ep.id, topicId: tid }))
+        });
+      }
+    }
+
     if (data.seasonNumber !== undefined) {
       const n = data.seasonNumber === "" || data.seasonNumber === null ? null : Number(data.seasonNumber);
       if (!n) u.seasonId = null;
@@ -570,5 +593,19 @@ export class AdminEpisodeService {
     });
     await AuditService.logAction({ actorId: adminId, action: body.mode === "schedule" ? "EPISODE_SCHEDULED" : "EPISODE_PUBLISHED", entityType: "EPISODE", entityId: full.id }).catch(() => {});
     return this.get(full.id);
+  }
+
+  static async bulkPublish(adminId: string, ids: string[]) {
+    const results = { success: 0, failed: 0, errors: [] as { id: string, reason: string }[] };
+    for (const id of ids) {
+      try {
+        await this.publish(adminId, id, { mode: "now" });
+        results.success++;
+      } catch (err: any) {
+        results.failed++;
+        results.errors.push({ id, reason: err.message || "Erreur inconnue" });
+      }
+    }
+    return results;
   }
 }

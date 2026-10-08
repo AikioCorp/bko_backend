@@ -147,13 +147,16 @@ router.post("/creator/episodes/:episodeId/transcripts/generate", authenticateTok
 router.patch("/creator/transcripts/segments/:id", authenticateToken, TranscriptController.updateSegment);
 router.post("/creator/episodes/:episodeId/chapters", authenticateToken, TranscriptController.updateChapters);
 
-// --- BACKOFFICE ADMIN & CMS ÉDITORIAL ---
+// --- BACKOFFICE ADMIN & CMS
+router.get("/admin/media", authenticateToken, requirePermission("catalog.view"), AdminMediaController.list);
+router.delete("/admin/media/:id", authenticateToken, requirePermission("catalog.delete"), AdminMediaController.remove); 
 router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
 router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
 router.get("/admin/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listAllEpisodes);
 router.get("/admin/catalog/health", authenticateToken, requirePermission("catalog.view"), AdminController.getContentHealth);
 router.get("/admin/podcasts/:id", authenticateToken, requirePermission("catalog.view"), AdminController.getPodcast);
 router.get("/admin/podcasts/:id/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listEpisodes);
+import { AdminMediaController } from "../../modules/admin/admin-media.controller.js";
 import { AdminEpisodeController } from "../../modules/admin/admin-episode.controller.js";
 
 // --- ADMIN EPISODES V2 (Création & Édition détaillée) ---
@@ -169,6 +172,7 @@ router.post("/admin/media/youtube/preview", authenticateToken, requirePermission
 router.post("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.setYoutube);
 router.post("/admin/episodes/:id/youtube/check", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.reportYoutubeCheck);
 router.delete("/admin/episodes/:id/youtube", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.removeYoutube);
+router.post("/admin/episodes/bulk-publish", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.bulkPublish);
 router.post("/admin/episodes/:id/publish", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.publish);
 
 import { AdminEditorialController } from "../../modules/admin/admin-editorial.controller.js";
@@ -217,7 +221,8 @@ router.get("/admin/audit", authenticateToken, requirePermission("audit.view"), A
 // --- ADMIN RSS IMPORTS ---
 router.post("/admin/rss/preview", authenticateToken, requirePermission("catalog.create"), AdminRssController.previewRss);
 router.post("/admin/rss/imports", authenticateToken, requirePermission("catalog.create"), AdminRssController.createImport);
-router.get("/admin/rss/imports/:id", authenticateToken, requirePermission("catalog.view"), AdminRssController.getImportStatus);
+router.get("/admin/rss/imports/:id/status", authenticateToken, requirePermission("catalog.view"), AdminRssController.getImportStatus);
+router.post("/admin/podcasts/:id/rss/sync", authenticateToken, requirePermission("catalog.edit"), AdminRssController.syncFeedNow);
 
 // --- ADMIN CATEGORIES & LANGUAGES ---
 router.get("/admin/categories", authenticateToken, AdminClassificationController.listCategories);
@@ -261,7 +266,7 @@ router.post("/reports", authenticateToken, accountLimiter(10), AdminConsoleContr
 router.post("/podcasts/:podcastId/claims", authenticateToken, ClaimController.submitClaim);
 router.get("/me/claims", authenticateToken, ClaimController.getUserClaims);
 
-// --- COLLECTIONS ÉDITORIALES ---
+// --- COLLECTIONS 
 router.get("/collections", CollectionController.listCollections);
 router.get("/collections/:slug", CollectionController.getCollectionBySlug);
 router.post("/admin/collections", authenticateToken, requirePermission("catalog.edit"), CollectionController.createCollection);

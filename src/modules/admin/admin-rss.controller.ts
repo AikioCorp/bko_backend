@@ -161,4 +161,37 @@ export class AdminRssController {
       return sendError(res, e.message);
     }
   }
+
+  static async syncFeedNow(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      const podcast = await prisma.podcast.findUnique({
+        where: { id },
+        include: { rssFeed: true }
+      });
+      
+      if (!podcast) return sendError(res, "Podcast introuvable", 404);
+      
+      const rssFeed = podcast.rssFeed;
+      if (!rssFeed) return sendError(res, "RSS non connecté", 400);
+
+      await prisma.jobQueueItem.create({
+        data: {
+          queueName: "rss-importer",
+          jobType: "RSS_SYNC_FEED",
+          payload: {
+            rssFeedId: rssFeed.id,
+            podcastId: id,
+            feedUrl: rssFeed.url,
+          },
+        },
+      });
+
+      return sendSuccess(res, { message: "Synchronisation lancée" });
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
 }

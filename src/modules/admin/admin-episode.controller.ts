@@ -128,4 +128,16 @@ export class AdminEpisodeController {
       return AdminEpisodeController.handleError(res, e);
     }
   }
+
+  static async bulkPublish(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!Array.isArray(req.body.ids) || req.body.ids.length === 0) {
+        throw new AdminEpisodeError("INVALID_INPUT", "Veuillez fournir un tableau d'identifiants.", 400);
+      }
+      const results = await AdminEpisodeService.bulkPublish(req.user!.id, req.body.ids);
+      return sendSuccess(res, results, `${results.success} épisode(s) publié(s) avec succès. ${results.failed > 0 ? results.failed + ' échec(s).' : ''}`);
+    } catch (e: any) {
+      return AdminEpisodeController.handleError(res, e);
+    }
+  }
 }

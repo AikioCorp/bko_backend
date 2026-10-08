@@ -31,10 +31,15 @@ export class AdminCatalogService {
       where.categories = { some: { categoryId: filters.categoryId } };
     }
     if (filters.search) {
-      where.OR = [
-        { name: { contains: filters.search, mode: "insensitive" } },
-        { description: { contains: filters.search, mode: "insensitive" } },
-      ];
+      const cleanSearch = filters.search.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const slugSearch = cleanSearch.toLowerCase().replace(/['’\s]+/g, '-');
+        where.OR = [
+          { name: { contains: filters.search, mode: "insensitive" } },
+          { name: { contains: cleanSearch, mode: "insensitive" } },
+          { slug: { contains: slugSearch, mode: "insensitive" } },
+          { slug: { contains: cleanSearch.replace(/[^a-zA-Z0-9]/g, ''), mode: "insensitive" } },
+          { description: { contains: filters.search, mode: "insensitive" } },
+        ];
     }
 
     const [items, total] = await Promise.all([
@@ -133,12 +138,16 @@ export class AdminCatalogService {
   }
 
   static async listAllEpisodes(skip = 0, take = 50, search = "") {
-    const where = search ? {
-      OR: [
-        { title: { contains: search, mode: 'insensitive' as const } },
-        { podcast: { name: { contains: search, mode: 'insensitive' as const } } }
-      ]
-    } : {};
+    const cleanSearch = search ? search.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+      const slugSearch = cleanSearch.toLowerCase().replace(/['’\s]+/g, '-');
+      const where = search ? {
+        OR: [
+          { title: { contains: search, mode: 'insensitive' as const } },
+          { slug: { contains: slugSearch, mode: 'insensitive' as const } },
+          { podcast: { name: { contains: search, mode: 'insensitive' as const } } },
+          { podcast: { slug: { contains: slugSearch, mode: 'insensitive' as const } } }
+        ]
+      } : {};
     const [data, total] = await Promise.all([
       prisma.episode.findMany({
         where,

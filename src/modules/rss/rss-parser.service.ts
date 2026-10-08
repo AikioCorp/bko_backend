@@ -10,7 +10,7 @@ export interface ParsedRssItem {
   enclosureLength: number | null;
   durationSeconds: number;
   seasonNumber: number | null;
-  episodeNumber: number | null;
+  episodeNumber: number | null; keywords: string[];
   mediaType: "AUDIO" | "VIDEO";
   fingerprint: string;
 }
@@ -62,7 +62,7 @@ export class RssParserService {
       const itemEnclosureLengthMatch = itemXml.match(/<enclosure[^>]*length=["']([^"']+)["'][^>]*>/i);
       const itemDurationMatch = itemXml.match(/<itunes:duration>(.*?)<\/itunes:duration>/i);
       const itemSeasonMatch = itemXml.match(/<itunes:season>(.*?)<\/itunes:season>/i);
-      const itemEpisodeMatch = itemXml.match(/<itunes:episode>(.*?)<\/itunes:episode>/i);
+      const itemEpisodeMatch = itemXml.match(/<itunes:episode>(.*?)<\/itunes:episode>/i); const itemCategories = [...itemXml.matchAll(/<category[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/category>/gi)].map(m => m[1]); const itemItunesKeywordsMatch = itemXml.match(/<itunes:keywords>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/itunes:keywords>/i); const keywords = [...new Set([...itemCategories, ...(itemItunesKeywordsMatch ? itemItunesKeywordsMatch[1].split(',') : [])].map(k => k.trim()).filter(Boolean))];
 
       if (!itemEnclosureMatch) continue; // Ignorer les items sans fichier média
 
@@ -86,7 +86,7 @@ export class RssParserService {
         enclosureUrl,
         enclosureType,
         enclosureLength: itemEnclosureLengthMatch ? parseInt(itemEnclosureLengthMatch[1], 10) : null,
-        durationSeconds,
+        durationSeconds, keywords,
         seasonNumber: itemSeasonMatch ? parseInt(itemSeasonMatch[1], 10) : null,
         episodeNumber: itemEpisodeMatch ? parseInt(itemEpisodeMatch[1], 10) : null,
         mediaType,
