@@ -4,6 +4,7 @@ set -e
 # Effectuer les migrations Prisma au démarrage si RUN_MIGRATIONS != false
 if [ "$RUN_MIGRATIONS" != "false" ]; then
   echo "🚀 [Migration] Application des migrations Prisma sur la base VPS..."
+  node scripts/verify-migrations.cjs
   npx prisma migrate deploy
 
   # Exécuter le seed initial si activé

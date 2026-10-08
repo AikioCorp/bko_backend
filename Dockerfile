@@ -13,8 +13,10 @@ RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/
 # Cache des dépendances npm
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY scripts/verify-migrations.cjs ./scripts/verify-migrations.cjs
+RUN node scripts/verify-migrations.cjs
 
-RUN npm ci
+RUN npm ci --include=dev
 
 # Génération des binaires Prisma Client adaptés à l'architecture Linux
 RUN npx prisma generate
@@ -36,6 +38,8 @@ RUN apt-get update && apt-get install -y openssl ca-certificates dumb-init curl 
 
 COPY package*.json ./
 COPY prisma ./prisma/
+COPY scripts/verify-migrations.cjs ./scripts/verify-migrations.cjs
+RUN node scripts/verify-migrations.cjs
 
 # Dépendances de production + outils CLI pour les migrations automatiques
 RUN npm ci --only=production && \
