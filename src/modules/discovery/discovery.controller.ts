@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { DiscoveryService } from "./discovery.service.js";
+import { HeroService } from "./hero.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { prisma } from "../../config/prisma.js";
 
@@ -33,63 +34,22 @@ export class DiscoveryController {
       ]);
       
       
-      // Calcul du Hero Episode : le plus écouté, potentiellement personnalisé
+      // Slides de la bannière : adaptées à l'utilisateur (si connecté)
       const userId = (req as any).user?.id;
-      let heroEpisode = null;
-      
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-      // Récupérer les épisodes les plus populaires de la semaine
-      const popularEpisodes = await prisma.episode.findMany({
-        where: { 
-          status: "PUBLISHED",
-          podcast: { status: "PUBLISHED" },
-          publishedAt: { gte: oneWeekAgo }
-        },
-        orderBy: { histories: { _count: "desc" } },
-        take: 10,
-        include: {
-          podcast: { select: { id: true, name: true, slug: true, cover: true, categories: { include: { category: true } } } },
-          mediaSources: true,
-          language: true
-        }
-      });
-
-      if (popularEpisodes.length > 0) {
-        if (userId) {
-          // Personnalisation basée sur l'historique
-          const history = await prisma.playbackHistory.findMany({
-            where: { userId },
-            orderBy: { lastPlayedAt: "desc" },
-            take: 10,
-            include: { episode: { include: { podcast: { include: { categories: true } } } } }
-          });
-          
-          const preferredCategories = new Set(
-            history.flatMap(h => h.episode?.podcast?.categories?.map(c => c.categoryId) || [])
-          );
-
-          // Trouver le premier épisode populaire qui matche une catégorie préférée et non complété
-          const personalizedEpisode = popularEpisodes.find(ep => 
-            ep.podcast?.categories?.some(c => preferredCategories.has(c.categoryId))
-          );
-          
-          heroEpisode = personalizedEpisode || popularEpisodes[0];
-        } else {
-          heroEpisode = popularEpisodes[0];
-        }
-      } else {
-        // Fallback s'il n'y a pas d'épisodes cette semaine
-        heroEpisode = latestEpisodes.length > 0 ? latestEpisodes[0] : null;
+      let heroSlides: any[] = [];
+      try {
+        heroSlides = await HeroService.build(userId, latestEpisodes, trending);
+      } catch (e) {
+        heroSlides = [];
       }
-
+      const heroEpisode = heroSlides[0]?.episode || (latestEpisodes.length > 0 ? latestEpisodes[0] : null);
 
       return sendSuccess(res, {
         sections,
         trending,
         latestEpisodes,
         heroEpisode,
+        heroSlides,
         categoryShelves,
       });
     } catch (error: any) {
