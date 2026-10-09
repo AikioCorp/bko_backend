@@ -59,9 +59,11 @@ async function importPodcast(url: string) {
 
 async function main() {
   const urls = [
-    "https://anchor.fm/s/98c16b80/podcast/rss",
-    "https://feed.ausha.co/b2LXliKJ8N9r",
-    "https://anchor.fm/s/10722682c/podcast/rss"
+    "https://feed.ausha.co/26gAqHq3G9nR",
+    "https://feeds.acast.com/public/shows/660e40a0acbcaf0017522be9",
+    "https://feed.ausha.co/RD65jCX6l8Dq",
+    "https://feed.ausha.co/3PK66SPpXQ2R",
+    "https://revolutiondescoeurs.lepodcast.fr/rss"
   ];
 
   for (const url of urls) {
