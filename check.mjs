@@ -1,0 +1,1 @@
+﻿import { PrismaClient } from '@prisma/client'; const prisma = new PrismaClient(); async function main() { const res = await prisma.podcast.findMany({take: 1}); console.log('Prisma works'); } main().finally(() => prisma.$disconnect());

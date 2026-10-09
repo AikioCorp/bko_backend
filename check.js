@@ -1,0 +1,1 @@
+const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); async function run() { const res = await prisma.\$queryRawUnsafe('SELECT * FROM _prisma_migrations'); console.log(res); } run().finally(()=>prisma.\$disconnect());
