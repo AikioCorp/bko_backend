@@ -7,9 +7,13 @@ try {
   for (const directory of directories) {
     const file = path.join(root,directory.name,"migration.sql");
     try {
-      if (!fs.readFileSync(file,"utf8").trim()) throw new Error("fichier vide");
+      const buffer = fs.readFileSync(file);
+      if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) {
+        throw new Error("Encodage UTF-16LE détecté ! Prisma requiert UTF-8 sans BOM.");
+      }
+      if (!buffer.toString("utf8").trim()) throw new Error("fichier vide");
     } catch (error) {
-      throw new Error(`Migration illisible : ${file} (${error.message}). Vérifiez que les volumes de déploiement ne masquent pas /app/prisma.`);
+      throw new Error(`Migration invalide : ${file} (${error.message}).`);
     }
   }
   console.log(`[Migration] ${directories.length} fichiers SQL vérifiés dans ${root}.`);

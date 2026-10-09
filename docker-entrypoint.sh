@@ -9,16 +9,7 @@ if [ "$RUN_MIGRATIONS" != "false" ]; then
   # Nettoyer la base des potentiels caractères invisibles Windows (\r) qui causent P3015
   node scripts/fix-prisma-migrations.cjs || true
   
-  echo "🔍 [DEBUG] PWD est : $(pwd)"
-  echo "🔍 [DEBUG] Contenu du dossier migrations :"
-  ls -la prisma/migrations/ || true
-  ls -la prisma/migrations/20261008135000_feature_engagement/ || true
-  
-  if ! npx prisma migrate deploy; then
-    echo "⚠️ La migration a échoué. Exécution avec DEBUG=*..."
-    DEBUG="*" npx prisma migrate deploy
-    exit 1
-  fi
+  npx prisma migrate deploy
 
   # Exécuter le seed initial si activé
   if [ "$AUTO_SEED" = "true" ] || [ "$RUN_SEED" = "true" ]; then
