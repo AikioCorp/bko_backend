@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/
 # Cache des dépendances npm
 COPY package*.json ./
 COPY prisma ./prisma/
-COPY scripts/verify-migrations.cjs ./scripts/verify-migrations.cjs
+COPY scripts ./scripts/
 RUN node scripts/verify-migrations.cjs
 
 RUN npm ci --include=dev
@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y openssl ca-certificates dumb-init curl 
 
 COPY package*.json ./
 COPY prisma ./prisma/
-COPY scripts/verify-migrations.cjs ./scripts/verify-migrations.cjs
+COPY scripts ./scripts/
 RUN node scripts/verify-migrations.cjs
 
 # Dépendances de production + outils CLI pour les migrations automatiques
