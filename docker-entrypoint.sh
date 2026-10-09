@@ -9,12 +9,13 @@ if [ "$RUN_MIGRATIONS" != "false" ]; then
   # Nettoyer la base des potentiels caractères invisibles Windows (\r) qui causent P3015
   node scripts/fix-prisma-migrations.cjs || true
   
-  # Try to deploy, if P3015 occurs, attempt to mark the migration as resolved to bypass the Prisma case/sync bug
+  echo "🔍 [DEBUG] Contenu du dossier migrations :"
+  ls -la prisma/migrations/ || true
+  
   if ! npx prisma migrate deploy; then
-    echo "⚠️ La migration a échoué. Tentative de résolution de contournement pour P3015..."
-    npx prisma migrate resolve --applied 20261008135000_feature_engagement || true
-    echo "🔁 Nouvelle tentative de déploiement des migrations..."
-    npx prisma migrate deploy
+    echo "⚠️ La migration a échoué. Exécution avec DEBUG=*..."
+    DEBUG="*" npx prisma migrate deploy
+    exit 1
   fi
 
   # Exécuter le seed initial si activé
