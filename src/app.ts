@@ -102,7 +102,7 @@ if (process.env.NODE_ENV !== "test") {
   app.listen(PORT, () => {
     console.log(`🚀 Serveur Bko_backend démarré sur http://localhost:${PORT}`);
     // Démarre automatiquement le traitement asynchrone des files de tâches (RSS, médias, etc.)
-    startEmbeddedWorker();
+    // startEmbeddedWorker();
   });
 }
 

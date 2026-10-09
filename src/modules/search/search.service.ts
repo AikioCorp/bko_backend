@@ -37,7 +37,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
             { alternateTitles: { some: { title: { contains: searchTerm, mode: "insensitive" } } } },
           ],
@@ -56,7 +56,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { title: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { title: { contains: searchTerm, mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
           ],
         },
@@ -71,7 +71,7 @@ export class SearchService {
       prisma.person.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -87,7 +87,7 @@ export class SearchService {
       prisma.topic.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
@@ -103,7 +103,7 @@ export class SearchService {
       prisma.organization.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
           ],
         },
@@ -114,25 +114,7 @@ export class SearchService {
       }),
 
       // 6. Passages d'Épisodes (Recherche dans les Transcriptions)
-      prisma.transcriptSegment.findMany({
-        where: {
-          transcript: { visibility: "PUBLIC", status: "READY" },
-          text: { contains: searchTerm, mode: "insensitive" },
-        },
-        include: {
-          transcript: {
-            include: {
-              episode: {
-                include: {
-                  podcast: { select: { name: true, slug: true, cover: true } },
-                },
-              },
-            },
-          },
-        },
-        take: limit,
-        orderBy: { startTimeMs: "asc" },
-      }),
+      Promise.resolve([]),
     ]);
 
     const passages = matchingSegments.map((s) => ({
@@ -173,7 +155,7 @@ export class SearchService {
         where: {
           status: "PUBLISHED",
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { alternateTitles: { some: { title: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -183,7 +165,7 @@ export class SearchService {
       prisma.person.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },
@@ -193,7 +175,7 @@ export class SearchService {
       prisma.topic.findMany({
         where: {
           OR: [
-            { name: { contains: searchTerm, mode: "insensitive" } }, { slug: { contains: searchTerm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’\s]+/g, '-'), mode: "insensitive" } },
+            { name: { contains: searchTerm, mode: "insensitive" } },
             { aliases: { some: { alias: { contains: searchTerm, mode: "insensitive" } } } },
           ],
         },

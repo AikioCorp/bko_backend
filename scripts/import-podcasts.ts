@@ -59,11 +59,12 @@ async function importPodcast(url: string) {
 
 async function main() {
   const urls = [
-    "https://feed.ausha.co/26gAqHq3G9nR",
-    "https://feeds.acast.com/public/shows/660e40a0acbcaf0017522be9",
-    "https://feed.ausha.co/RD65jCX6l8Dq",
-    "https://feed.ausha.co/3PK66SPpXQ2R",
-    "https://revolutiondescoeurs.lepodcast.fr/rss"
+    "https://media.rss.com/africatechsummit/feed.xml",
+    "https://anchor.fm/s/222060e4/podcast/rss",
+    "https://anchor.fm/s/2d7d800c/podcast/rss",
+    "https://anchor.fm/s/5cbf0674/podcast/rss",
+    "https://anchor.fm/s/f2b89ab4/podcast/rss",
+    "https://www.spreaker.com/show/4091143/episodes/feed"
   ];
 
   for (const url of urls) {

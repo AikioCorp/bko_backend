@@ -24,6 +24,7 @@ export class DiscoveryController {
           where: { status: "PUBLISHED", podcast: { status: "PUBLISHED", ...(country !== "all" ? {countryId: country} : {}) } },
           orderBy: { publishedAt: "desc" },
           take: 24,
+distinct: ['podcastId'],
           include: {
             podcast: { select: { id: true, name: true, slug: true, cover: true, categories: { include: { category: true } } } },
             mediaSources: true,
