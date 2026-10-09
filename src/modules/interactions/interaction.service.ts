@@ -52,7 +52,7 @@ export class InteractionService {
 
   
   static async getFollowedPodcasts(userId: string) {
-    const followed = await prisma.podcastFollower.findMany({
+    const followed = await prisma.podcastFollow.findMany({
       where: { userId },
       include: {
         podcast: {
@@ -66,7 +66,7 @@ export class InteractionService {
       },
       orderBy: { createdAt: 'desc' }
     });
-    return followed.map(f => f.podcast);
+    return followed.map((f: any) => f.podcast);
   }
 
   static async getSavedEpisodes(userId: string) {
