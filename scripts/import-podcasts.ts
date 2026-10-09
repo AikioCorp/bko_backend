@@ -21,7 +21,7 @@ async function importPodcast(url: string) {
           cover: parsed.image || "",
           primaryLanguageCode: "fr",
           countryId: "ML",
-          status: "DRAFT",
+          status: "PUBLISHED",
           creationSource: "ADMIN",
           ownershipStatus: "UNCLAIMED",
           managedByBamakoPodcast: false
@@ -59,12 +59,9 @@ async function importPodcast(url: string) {
 
 async function main() {
   const urls = [
-    "https://media.rss.com/africatechsummit/feed.xml",
-    "https://anchor.fm/s/222060e4/podcast/rss",
-    "https://anchor.fm/s/2d7d800c/podcast/rss",
-    "https://anchor.fm/s/5cbf0674/podcast/rss",
-    "https://anchor.fm/s/f2b89ab4/podcast/rss",
-    "https://www.spreaker.com/show/4091143/episodes/feed"
+    "https://anchor.fm/s/5657a084/podcast/rss", // Burkina
+    "https://api.afripods.com/feed/d36f9043-4c70-4691-9d82-d4954887575f", // Ghana
+    "https://anchor.fm/s/d6b7a530/podcast/rss" // Ghana
   ];
 
   for (const url of urls) {

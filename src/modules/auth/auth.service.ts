@@ -59,7 +59,7 @@ export class AuthService {
         phoneNumber,
         fullName,
         passwordHash,
-        isVerified: false,
+        isVerified: true,
         otpCode: hashToken(otpCode), // OTP stocké haché, jamais en clair
         otpExpiresAt,
         ...(roleUser
