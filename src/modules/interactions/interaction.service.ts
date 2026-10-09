@@ -50,6 +50,25 @@ export class InteractionService {
     return { message: "Épisode retiré de la bibliothèque" };
   }
 
+  
+  static async getFollowedPodcasts(userId: string) {
+    const followed = await prisma.podcastFollower.findMany({
+      where: { userId },
+      include: {
+        podcast: {
+          include: {
+            primaryLanguage: true,
+            _count: {
+              select: { episodes: true }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    return followed.map(f => f.podcast);
+  }
+
   static async getSavedEpisodes(userId: string) {
     const saved = await prisma.savedEpisode.findMany({
       where: { userId },

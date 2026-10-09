@@ -44,6 +44,17 @@ export class InteractionController {
     }
   }
 
+  
+  static async getFollowedPodcasts(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const followed = await InteractionService.getFollowedPodcasts(req.user.id);
+      return sendSuccess(res, followed);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
   static async getSavedEpisodes(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);

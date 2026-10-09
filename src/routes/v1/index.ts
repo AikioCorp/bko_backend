@@ -374,6 +374,7 @@ router.delete("/podcasts/:id/follow", authenticateToken, InteractionController.u
 
 router.post("/episodes/:id/save", authenticateToken, InteractionController.saveEpisode);
 router.delete("/episodes/:id/save", authenticateToken, InteractionController.unsaveEpisode);
+router.get("/me/following", authenticateToken, InteractionController.getFollowedPodcasts);
 router.get("/me/saved", authenticateToken, InteractionController.getSavedEpisodes);
 
 router.post("/me/history", authenticateToken, InteractionController.updatePlaybackHistory);
