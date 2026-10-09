@@ -114,7 +114,7 @@ export class SearchService {
       }),
 
       // 6. Passages d'Épisodes (Recherche dans les Transcriptions)
-      Promise.resolve([]),
+      Promise.resolve([] as any[]),
     ]);
 
     const passages = matchingSegments.map((s) => ({
