@@ -4,7 +4,11 @@ import { EmailWorkerService } from "./modules/notifications/email-worker.service
 import { RssWorkerService } from "./modules/rss/rss-worker.service.js";
 import { TranscriptWorkerService } from "./modules/transcripts/transcript-worker.service.js";
 
-async function runWorkerLoop() {
+let isWorkerRunning = false;
+
+export async function runWorkerLoop() {
+  if (isWorkerRunning) return;
+  isWorkerRunning = true;
   console.log("🚀 Background Media, RSS & Transcript Worker démarré...");
 
   while (true) {
@@ -26,4 +30,12 @@ async function runWorkerLoop() {
   }
 }
 
-runWorkerLoop();
+export function startEmbeddedWorker() {
+  // Démarre la boucle worker en tâche de fond dans le processus principal sans bloquer le serveur HTTP
+  void runWorkerLoop();
+}
+
+// Si lancé directement en CLI (ex: `npm run worker` ou `node dist/worker.js`)
+if (process.argv[1] && process.argv[1].endsWith("worker.js")) {
+  runWorkerLoop();
+}

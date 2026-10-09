@@ -1,3 +1,4 @@
+import { startEmbeddedWorker } from "./worker.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -100,6 +101,8 @@ if (process.env.NODE_ENV !== "test") {
   PermissionService.bootstrap().catch((e) => console.error("RBAC bootstrap impossible (migration appliquée ?) :", e.message));
   app.listen(PORT, () => {
     console.log(`🚀 Serveur Bko_backend démarré sur http://localhost:${PORT}`);
+    // Démarre automatiquement le traitement asynchrone des files de tâches (RSS, médias, etc.)
+    startEmbeddedWorker();
   });
 }
 

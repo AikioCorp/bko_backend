@@ -34,6 +34,21 @@ const router = Router();
 
 // Rate-limiter strict pour les routes sensibles d'authentification (anti brute-force
 // login / OTP). Bien plus serré que le limiteur global. Clé par IP.
+// Limiteur dédié au renouvellement de session (refresh token)
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === "production" ? 300 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "TOO_MANY_REFRESH_ATTEMPTS",
+      message: "Trop de renouvellements de session. Réessayez dans quelques minutes.",
+    },
+  },
+});
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === "production" ? 10 : 100,
@@ -110,7 +125,7 @@ router.post("/auth/verify-otp", authLimiter, accountLimiter(5), AuthController.v
 router.post("/auth/forgot-password", authLimiter, accountLimiter(3), AuthController.forgotPassword);
 router.post("/auth/reset-password", authLimiter, AuthController.resetPassword);
 router.post("/auth/login", authLimiter, accountLimiter(10), AuthController.login);
-router.post("/auth/refresh", authLimiter, AuthController.refreshToken);
+router.post("/auth/refresh", refreshLimiter, AuthController.refreshToken);
 router.post("/auth/logout", authLimiter, AuthController.logout);
 router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevices);
 
