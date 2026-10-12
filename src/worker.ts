@@ -6,15 +6,38 @@ import { TranscriptWorkerService } from "./modules/transcripts/transcript-worker
 
 import { EmbeddingWorkerService } from "./modules/recommendations/embedding-worker.service.js";
 
+import fs from "fs";
+import os from "os";
+import path from "path";
+
 let isWorkerRunning = false;
+const defaultHeartbeat = path.join(os.tmpdir(), "worker-heartbeat");
+const HEARTBEAT_FILE = process.env.WORKER_HEARTBEAT_FILE || defaultHeartbeat;
+
+function touchHeartbeat() {
+  try {
+    fs.writeFileSync(
+      HEARTBEAT_FILE,
+      JSON.stringify({
+        timestamp: Date.now(),
+        pid: process.pid,
+        uptimeSeconds: Math.floor(process.uptime()),
+      })
+    );
+  } catch {
+    // Ne pas interrompre le worker si l'écriture du heartbeat échoue temporairement
+  }
+}
 
 export async function runWorkerLoop() {
   if (isWorkerRunning) return;
   isWorkerRunning = true;
   console.log("🚀 Background Media, RSS, Embeddings & Transcript Worker démarré...");
+  touchHeartbeat();
 
   while (true) {
     try {
+      touchHeartbeat();
       const mediaProcessed = await MediaWorkerService.processNextJob();
       await RssWorkerService.scheduleAutoSyncs();
       const rssProcessed = await RssWorkerService.processNextJob();
@@ -23,11 +46,14 @@ export async function runWorkerLoop() {
       const emailProcessed = await EmailWorkerService.processNextJob();
       const embeddingProcessed = await EmbeddingWorkerService.processPendingEmbeddings();
 
+      touchHeartbeat();
+
       if (!mediaProcessed && !rssProcessed && !transcriptProcessed && !publishProcessed && !emailProcessed && !embeddingProcessed) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
     } catch (error) {
       console.error("Erreur worker:", error);
+      touchHeartbeat();
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }

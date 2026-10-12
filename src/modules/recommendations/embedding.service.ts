@@ -205,6 +205,10 @@ export class EmbeddingService {
     // Vérifier si déjà calculé avec la même version et le même hash
     const existing = await prisma.episodeEmbedding.findUnique({ where: { episodeId } });
     if (existing && existing.contentHash === contentHash && existing.modelVersion === this.MODEL_VERSION && existing.status === "COMPLETED") {
+      await prisma.episodeEmbedding.update({
+        where: { episodeId },
+        data: { updatedAt: new Date() },
+      });
       return true;
     }
 
@@ -279,6 +283,10 @@ export class EmbeddingService {
 
     const existing = await prisma.podcastEmbedding.findUnique({ where: { podcastId } });
     if (existing && existing.contentHash === contentHash && existing.modelVersion === this.MODEL_VERSION && existing.status === "COMPLETED") {
+      await prisma.podcastEmbedding.update({
+        where: { podcastId },
+        data: { updatedAt: new Date() },
+      });
       return true;
     }
 
@@ -350,7 +358,7 @@ export class EmbeddingService {
       try {
         const formattedVector = `[${target.vector.join(",")}]`;
         const results = await prisma.$queryRawUnsafe<Array<{ episodeId: string; distance: number }>>(
-          `SELECT ee."episodeId", (ee.vector::text::vector <=> $1::vector) as distance
+          `SELECT ee."episodeId", (ee.vector::vector <=> $1::vector) as distance
            FROM "EpisodeEmbedding" ee
            JOIN "Episode" e ON ee."episodeId" = e.id
            JOIN "Podcast" p ON e."podcastId" = p.id
@@ -424,7 +432,7 @@ export class EmbeddingService {
       try {
         const formattedVector = `[${target.vector.join(",")}]`;
         const results = await prisma.$queryRawUnsafe<Array<{ podcastId: string; distance: number }>>(
-          `SELECT pe."podcastId", (pe.vector::text::vector <=> $1::vector) as distance
+          `SELECT pe."podcastId", (pe.vector::vector <=> $1::vector) as distance
            FROM "PodcastEmbedding" pe
            JOIN "Podcast" p ON pe."podcastId" = p.id
            WHERE pe."podcastId" != $2
