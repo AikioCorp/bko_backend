@@ -1,4 +1,4 @@
-﻿import { PrismaClient, EditorialSectionType, EditorialSourceMode } from "@prisma/client";
+import { PrismaClient, EditorialSectionType, EditorialSourceMode } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -54,6 +54,11 @@ export class AdminEditorialService {
         sourceMode: (data.sourceMode || "MANUAL") as EditorialSourceMode,
         isActive: data.isActive ?? false,
         position,
+        maxItems: data.maxItems ? Number(data.maxItems) : 12,
+        isFixedPlacement: Boolean(data.isFixedPlacement),
+        priority: data.priority ? Number(data.priority) : 0,
+        selectionStrategy: data.selectionStrategy || "DEFAULT",
+        strategyParams: data.strategyParams || null,
       }
     });
   }
@@ -62,11 +67,16 @@ export class AdminEditorialService {
     return prisma.editorialSection.update({
       where: { id },
       data: {
-        title: data.title,
-        subtitle: data.subtitle,
-        type: data.type,
-        sourceMode: data.sourceMode,
-        isActive: data.isActive,
+        ...(data.title !== undefined ? { title: data.title } : {}),
+        ...(data.subtitle !== undefined ? { subtitle: data.subtitle } : {}),
+        ...(data.type !== undefined ? { type: data.type } : {}),
+        ...(data.sourceMode !== undefined ? { sourceMode: data.sourceMode } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        ...(data.maxItems !== undefined ? { maxItems: Number(data.maxItems) } : {}),
+        ...(data.isFixedPlacement !== undefined ? { isFixedPlacement: Boolean(data.isFixedPlacement) } : {}),
+        ...(data.priority !== undefined ? { priority: Number(data.priority) } : {}),
+        ...(data.selectionStrategy !== undefined ? { selectionStrategy: data.selectionStrategy } : {}),
+        ...(data.strategyParams !== undefined ? { strategyParams: data.strategyParams } : {}),
       }
     });
   }

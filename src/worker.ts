@@ -4,12 +4,14 @@ import { EmailWorkerService } from "./modules/notifications/email-worker.service
 import { RssWorkerService } from "./modules/rss/rss-worker.service.js";
 import { TranscriptWorkerService } from "./modules/transcripts/transcript-worker.service.js";
 
+import { EmbeddingWorkerService } from "./modules/recommendations/embedding-worker.service.js";
+
 let isWorkerRunning = false;
 
 export async function runWorkerLoop() {
   if (isWorkerRunning) return;
   isWorkerRunning = true;
-  console.log("🚀 Background Media, RSS & Transcript Worker démarré...");
+  console.log("🚀 Background Media, RSS, Embeddings & Transcript Worker démarré...");
 
   while (true) {
     try {
@@ -19,8 +21,9 @@ export async function runWorkerLoop() {
       const transcriptProcessed = await TranscriptWorkerService.processNextJob();
       const publishProcessed = await EpisodePublisherWorkerService.processNextJob();
       const emailProcessed = await EmailWorkerService.processNextJob();
+      const embeddingProcessed = await EmbeddingWorkerService.processPendingEmbeddings();
 
-      if (!mediaProcessed && !rssProcessed && !transcriptProcessed && !publishProcessed && !emailProcessed) {
+      if (!mediaProcessed && !rssProcessed && !transcriptProcessed && !publishProcessed && !emailProcessed && !embeddingProcessed) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
     } catch (error) {
@@ -36,6 +39,6 @@ export function startEmbeddedWorker() {
 }
 
 // Si lancé directement en CLI (ex: `npm run worker` ou `node dist/worker.js`)
-if (process.argv[1] && process.argv[1].endsWith("worker.js")) {
+if (process.argv[1] && (process.argv[1].endsWith("worker.js") || process.argv[1].endsWith("worker.ts"))) {
   runWorkerLoop();
 }

@@ -329,6 +329,14 @@ model User {
   notificationPreference NotificationPreference?
   auditLogs              AuditLog[]
 
+  // Personalization & Recommendations
+  recommendationProfile  UserRecommendationProfile?
+  listeningSessions      ListeningSession[]
+  listeningEvents        ListeningEvent[]
+  contentFeedback        UserContentFeedback[]
+  recommendationImpressions RecommendationImpression[]
+  attributionInteractions RecommendationInteraction[]
+
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   PodcastRating PodcastRating[]
@@ -619,6 +627,10 @@ model Podcast {
   claims           Claim[]
   editorialItems   EditorialSectionItem[]
   collectionItems  CollectionItem[]
+  embeddings       PodcastEmbedding[]
+  contentFeedback  UserContentFeedback[]
+  recommendationImpressions RecommendationImpression[]
+  attributionInteractions RecommendationInteraction[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -761,6 +773,12 @@ model Episode {
   collectionItems     CollectionItem[]
   rssImportedEpisodes RssImportedEpisode[]
   uploadSessions      UploadSession[]
+  listeningSessions   ListeningSession[]
+  listeningEvents     ListeningEvent[]
+  embeddings          EpisodeEmbedding[]
+  contentFeedback     UserContentFeedback[]
+  recommendationImpressions RecommendationImpression[]
+  attributionInteractions RecommendationInteraction[]
 
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
@@ -1033,6 +1051,13 @@ model EditorialSection {
   market   Market?   @relation(fields: [marketId], references: [id], onDelete: SetNull)
   startsAt DateTime?
   endsAt   DateTime?
+
+  // Personalization, limits & rules
+  maxItems          Int      @default(12)
+  isFixedPlacement  Boolean  @default(false)
+  priority          Int      @default(0)
+  selectionStrategy String?  @default("DEFAULT")
+  strategyParams    Json?
 
   items     EditorialSectionItem[]
   createdAt DateTime               @default(now())
@@ -1460,3 +1485,292 @@ model Comment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model AdCampaign {
+  id               String    @id @default(cuid())
+  advertiserName   String
+  contactName      String?
+  contactEmail     String?
+  contactPhone     String?
+  title            String
+  description      String?
+  ctaLabel         String?   @default("En savoir plus")
+  targetUrl        String
+  imageUrlDesktop  String
+  imageUrlMobile   String?
+  altText          String?
+  placement        String    @default("EXPLORE_CATALOG")
+  isSponsored      Boolean   @default(true)
+  status           String    @default("ACTIVE")
+  priority         Int       @default(0)
+  startsAt         DateTime?
+  endsAt           DateTime?
+  impressionsCount Int       @default(0)
+  clicksCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status, placement])
+}
+
+model AdvertiserInquiry {
+  id           String    @id @default(cuid())
+  company      String
+  contactName  String
+  email        String
+  phone        String?
+  targetPeriod String?
+  budget       String?
+  message      String    @db.Text
+  status       String    @default("PENDING")
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+// ======================================================
+// RECOMMANDATIONS & PERSONNALISATION DE CONTENU
+// ======================================================
+
+enum FeedbackTargetType {
+  EPISODE
+  PODCAST
+}
+
+enum FeedbackAction {
+  NOT_INTERESTED
+  HIDE_PODCAST
+  EXCLUDE_FROM_PROFILE
+}
+
+enum InteractionTargetType {
+  EPISODE
+  PODCAST
+}
+
+enum InteractionActionType {
+  CLICK
+  PLAY_START
+  QUALIFIED_PLAY
+  FAVORITE
+  LIKE
+  FOLLOW
+}
+
+model UserContentFeedback {
+  id         String             @id @default(cuid())
+  userId     String
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetType FeedbackTargetType
+  podcastId  String?
+  podcast    Podcast?           @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  episodeId  String?
+  episode    Episode?           @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  action     FeedbackAction
+  createdAt  DateTime           @default(now())
+
+  @@unique([userId, targetType, podcastId, episodeId, action])
+  @@index([userId, targetType])
+  @@index([podcastId])
+  @@index([episodeId])
+}
+
+model UserRecommendationProfile {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personalizationActive Boolean  @default(true)
+  onboardingCompleted   Boolean  @default(false)
+  preferencesVersion    Int      @default(1)
+  profileVersion        Int      @default(1)
+  topicScores           Json     @default("{}")
+  categoryScores        Json     @default("{}")
+  languageScores        Json     @default("{}")
+  recentSignals         Json     @default("{}")
+  experimentVariant     String   @default("control")
+  computedAt            DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model ListeningSession {
+  id              String           @id @default(cuid())
+  sessionId       String           @unique
+  userId          String?
+  user            User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonymousId     String?
+  episodeId       String
+  episode         Episode          @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  playSource      String           @default("home")
+  recommendationId String?
+  sectionId       String?
+  positionSeconds Int              @default(0)
+  listenedSeconds Int              @default(0)
+  completed       Boolean          @default(false)
+  startedAt       DateTime         @default(now())
+  lastActiveAt    DateTime         @default(now())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  events          ListeningEvent[]
+
+  @@index([userId, lastActiveAt])
+  @@index([anonymousId, lastActiveAt])
+  @@index([episodeId])
+}
+
+model ListeningEvent {
+  id               String            @id @default(cuid())
+  clientEventId    String            @unique
+  listeningSessionId String?
+  session          ListeningSession? @relation(fields: [listeningSessionId], references: [id], onDelete: SetNull)
+  userId           String?
+  user             User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonymousId      String?
+  episodeId        String
+  episode          Episode           @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  eventType        String
+  positionSeconds  Int               @default(0)
+  deltaSeconds     Int               @default(0)
+  playbackRate     Float             @default(1.0)
+  playSource       String?
+  recommendationId String?
+  sectionId        String?
+  occurredAtClient DateTime
+  receivedAtServer DateTime          @default(now())
+
+  @@index([episodeId, occurredAtClient])
+  @@index([userId, occurredAtClient])
+  @@index([anonymousId, occurredAtClient])
+}
+
+model RecommendationBatch {
+  id           String                     @id @default(cuid())
+  batchId      String                     @unique
+  userId       String?
+  anonymousId  String?
+  engineVersion String                    @default("v1.0.0")
+  variant      String                     @default("control")
+  context      Json?
+  createdAt    DateTime                   @default(now())
+  impressions  RecommendationImpression[]
+  interactions RecommendationInteraction[]
+
+  @@index([userId, createdAt])
+  @@index([anonymousId, createdAt])
+}
+
+model RecommendationImpression {
+  id               String                @id @default(cuid())
+  batchId          String
+  batch            RecommendationBatch   @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  sectionId        String
+  sectionSlug      String
+  targetType       InteractionTargetType
+  episodeId        String?
+  episode          Episode?              @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  podcastId        String?
+  podcast          Podcast?              @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  position         Int
+  reason           String?
+  userId           String?
+  user             User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonymousId      String?
+  visibleAt        DateTime              @default(now())
+  receivedAt       DateTime              @default(now())
+
+  @@unique([batchId, sectionId, targetType, episodeId, podcastId, position])
+  @@index([sectionSlug, visibleAt])
+  @@index([episodeId])
+  @@index([podcastId])
+  @@index([userId, visibleAt])
+}
+
+model RecommendationInteraction {
+  id               String                @id @default(cuid())
+  batchId          String
+  batch            RecommendationBatch   @relation(fields: [batchId], references: [batchId], onDelete: Cascade)
+  sectionId        String
+  sectionSlug      String
+  targetType       InteractionTargetType
+  episodeId        String?
+  episode          Episode?              @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  podcastId        String?
+  podcast          Podcast?              @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  action           InteractionActionType
+  position         Int?
+  userId           String?
+  user             User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonymousId      String?
+  occurredAt       DateTime              @default(now())
+  receivedAt       DateTime              @default(now())
+
+  @@index([batchId, action])
+  @@index([episodeId])
+  @@index([podcastId])
+  @@index([userId, occurredAt])
+}
+
+model EpisodeEmbedding {
+  id             String    @id @default(cuid())
+  episodeId      String    @unique
+  episode        Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  provider       String    @default("bge-m3")
+  model          String    @default("BAAI/bge-m3")
+  dimensions     Int       @default(1024)
+  modelVersion   String    @default("v1")
+  contentHash    String
+  vector         Float[]
+  status         JobStatus @default(COMPLETED)
+  errorReason    String?   @db.Text
+  retryCount     Int       @default(0)
+  computedAt     DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([provider, modelVersion])
+}
+
+model PodcastEmbedding {
+  id             String    @id @default(cuid())
+  podcastId      String    @unique
+  podcast        Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  provider       String    @default("bge-m3")
+  model          String    @default("BAAI/bge-m3")
+  dimensions     Int       @default(1024)
+  modelVersion   String    @default("v1")
+  contentHash    String
+  vector         Float[]
+  status         JobStatus @default(COMPLETED)
+  errorReason    String?   @db.Text
+  retryCount     Int       @default(0)
+  computedAt     DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([provider, modelVersion])
+}
+
+model RecommendationDailyMetric {
+  id                    String   @id @default(cuid())
+  date                  DateTime @db.Date
+  variant               String   @default("control")
+  sectionSlug           String
+  impressionsCount      Int      @default(0)
+  clicksCount           Int      @default(0)
+  playsCount            Int      @default(0)
+  qualifiedPlaysCount   Int      @default(0)
+  uniqueUsersExposed    Int      @default(0)
+  uniqueUsersEngaged    Int      @default(0)
+  negativeFeedbackCount Int      @default(0)
+  followsGeneratedCount Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([date, variant, sectionSlug])
+  @@index([date])
+}
+
+

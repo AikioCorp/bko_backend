@@ -25,6 +25,8 @@ import { CreatorManageController } from "../../modules/creator/creator-manage.co
 import { AdminRssController } from "../../modules/admin/admin-rss.controller.js";
 import { AdminClassificationController } from "../../modules/admin/admin-classification.controller.js";
 import { AdminConsoleController } from "../../modules/admin/admin-console.controller.js";
+import { AdController } from "../../modules/ads/ad.controller.js";
+import { RecommendationController } from "../../modules/recommendations/recommendation.controller.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
 import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
@@ -396,13 +398,39 @@ router.get("/search", SearchController.search);
 router.get("/search/suggestions", SearchController.suggestions);
 
 router.get("/explore", DiscoveryController.getExplore);
-router.get("/home", optionalAuthenticateToken, DiscoveryController.getHome);
+router.get("/home", optionalAuthenticateToken, RecommendationController.getHome);
 router.get("/trending", DiscoveryController.getTrending);
+
+// --- RECOMMANDATIONS & PERSONNALISATION ---
+router.post("/recommendations/feedback", authenticateToken, RecommendationController.postFeedback);
+router.delete("/recommendations/feedback", authenticateToken, RecommendationController.deleteFeedback);
+router.post("/recommendations/reset-profile", authenticateToken, RecommendationController.resetProfile);
+router.patch("/recommendations/settings", authenticateToken, RecommendationController.updateSettings);
+router.post("/recommendations/onboarding", authenticateToken, RecommendationController.completeOnboarding);
+router.post("/recommendations/events/listening", optionalAuthenticateToken, RecommendationController.recordListeningEvents);
+router.post("/recommendations/events/impressions", optionalAuthenticateToken, RecommendationController.recordImpressions);
+router.post("/recommendations/events/interactions", optionalAuthenticateToken, RecommendationController.recordInteraction);
+router.get("/admin/recommendations/preview/:userId", authenticateToken, requirePermission("catalog.view"), RecommendationController.adminPreview);
 
 router.get("/podcasts", PodcastController.listPodcasts);
 router.get("/podcasts/:slug", optionalAuthenticateToken, PodcastController.getPodcastBySlug);
 
+router.get("/episodes/catalog", EpisodeController.listCatalogEpisodes);
 router.get("/episodes/recent", EpisodeController.listRecentEpisodes);
+
+// --- PUBLICITÉS & CAMPAGNES COMMERCIALES ---
+router.get("/ads/active", AdController.getActiveAds);
+router.post("/ads/:id/impression", AdController.recordImpression);
+router.post("/ads/:id/click", AdController.recordClick);
+router.post("/advertiser-inquiries", AdController.submitInquiry);
+
+router.get("/admin/ads", authenticateToken, AdController.listAdminCampaigns);
+router.post("/admin/ads", authenticateToken, AdController.createAdminCampaign);
+router.patch("/admin/ads/:id", authenticateToken, AdController.updateAdminCampaign);
+router.delete("/admin/ads/:id", authenticateToken, AdController.deleteAdminCampaign);
+
+router.get("/admin/advertiser-inquiries", authenticateToken, AdController.listAdminInquiries);
+router.patch("/admin/advertiser-inquiries/:id", authenticateToken, AdController.updateAdminInquiry);
 router.get("/podcasts/:podcastSlug/episodes/:episodeSlug", optionalAuthenticateToken, EpisodeController.getEpisodeBySlug);
 
 router.get("/categories", ReferentialController.getCategories);

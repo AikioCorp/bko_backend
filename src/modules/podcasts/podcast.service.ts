@@ -10,8 +10,10 @@ export class PodcastService {
     search?: string;
     limit?: number;
     cursor?: string;
+    offset?: number;
+    sort?: "recent" | "oldest" | "popular";
   }) {
-    const { countryId, languageCode, categorySlug, topicSlug, search, limit = 20, cursor } = params;
+    const { countryId, languageCode, categorySlug, topicSlug, search, limit = 20, cursor, offset, sort = "recent" } = params;
 
     // Filtre strict : Uniquement podcasts PUBLIÉS pour la vue publique
     const where: any = {
@@ -49,51 +51,67 @@ export class PodcastService {
       };
     }
 
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-        { alternateTitles: { some: { title: { contains: search, mode: "insensitive" } } } },
+    if (search && search.trim()) {
+      const q = search.trim();
+      const searchConditions = [
+        { name: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+        { alternateTitles: { some: { title: { contains: q, mode: "insensitive" } } } },
       ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
     }
 
-    // Cursor Pagination
-    const podcasts = await prisma.podcast.findMany({
-      where,
-      take: limit + 1, // Prendre +1 pour savoir s'il reste d'autres éléments (hasMore)
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      orderBy: { createdAt: "desc" },
-      include: {
-        country: true,
-        primaryLanguage: true,
-        categories: {
-          include: {
-            category: true,
+    let orderBy: any = { createdAt: "desc" };
+    if (sort === "oldest") {
+      orderBy = { createdAt: "asc" };
+    } else if (sort === "popular") {
+      orderBy = { followers: { _count: "desc" } };
+    }
+
+    const [total, podcasts] = await Promise.all([
+      prisma.podcast.count({ where }),
+      prisma.podcast.findMany({
+        where,
+        take: limit + 1, // Prendre +1 pour savoir s'il reste d'autres éléments (hasMore)
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : offset ? { skip: offset } : {}),
+        orderBy,
+        include: {
+          country: true,
+          primaryLanguage: true,
+          categories: {
+            include: {
+              category: true,
+            },
+          },
+          topics: {
+            include: {
+              topic: true,
+            },
+          },
+          permanentPersons: {
+            include: {
+              person: true,
+            },
+          },
+          episodes: {
+            where: { status: "PUBLISHED" },
+            orderBy: { publishedAt: "desc" },
+            take: 1,
+            include: {
+              mediaSources: true,
+            },
+          },
+          _count: {
+            select: { episodes: true, followers: true },
           },
         },
-        topics: {
-          include: {
-            topic: true,
-          },
-        },
-        permanentPersons: {
-          include: {
-            person: true,
-          },
-        },
-        episodes: {
-          where: { status: "PUBLISHED" },
-          orderBy: { publishedAt: "desc" },
-          take: 1,
-          include: {
-            mediaSources: true,
-          },
-        },
-        _count: {
-          select: { episodes: true, followers: true },
-        },
-      },
-    });
+      }),
+    ]);
 
     let hasMore = false;
     let nextCursor: string | null = null;
@@ -112,9 +130,11 @@ export class PodcastService {
     return {
       data: formattedPodcasts,
       pagination: {
+        total,
         nextCursor,
         hasMore,
         limit,
+        offset: offset || 0,
       },
     };
   }

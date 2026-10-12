@@ -13,6 +13,8 @@ export class PodcastController {
       const topicSlug = req.query.topic as string | undefined;
       const search = req.query.q as string | undefined;
       const cursor = req.query.cursor as string | undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+      const sort = (req.query.sort as any) || "recent";
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
 
       const result = await PodcastService.getPodcasts({
@@ -22,6 +24,8 @@ export class PodcastController {
         topicSlug,
         search,
         cursor,
+        offset,
+        sort,
         limit,
       });
 
