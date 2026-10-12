@@ -45,42 +45,47 @@ export class EmbeddingService {
    * Aucun vecteur de repli n'est frauduleusement labellisé sous le modèle BGE-M3.
    */
   static async generateEmbedding(text: string): Promise<EmbeddingResult> {
-    const apiUrl = process.env.BGE_M3_API_URL || process.env.EMBEDDING_API_URL;
-    if (apiUrl) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // Max 5s timeout
+    const providerMode = (process.env.EMBEDDING_PROVIDER || "local").trim().toLowerCase();
 
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(process.env.EMBEDDING_API_KEY ? { Authorization: `Bearer ${process.env.EMBEDDING_API_KEY}` } : {}),
-          },
-          body: JSON.stringify({
-            model: "BAAI/bge-m3",
-            input: text.slice(0, 4000),
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
+    // Mode externe optionnel : uniquement si EMBEDDING_PROVIDER est explicitement configuré sur 'remote'
+    if (providerMode === "remote") {
+      const apiUrl = process.env.BGE_M3_API_URL || process.env.EMBEDDING_API_URL;
+      if (apiUrl) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000); // Max 5s timeout
 
-        if (response.ok) {
-          const json = await response.json();
-          const vec = json?.data?.[0]?.embedding || json?.embedding;
-          if (Array.isArray(vec) && vec.length === this.DIMENSIONS) {
-            const normalized = this.normalizeVector(vec);
-            return {
-              vector: normalized,
-              provider: "bge-m3",
+          const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(process.env.EMBEDDING_API_KEY ? { Authorization: `Bearer ${process.env.EMBEDDING_API_KEY}` } : {}),
+            },
+            body: JSON.stringify({
               model: "BAAI/bge-m3",
-              dimensions: this.DIMENSIONS,
-              modelVersion: this.MODEL_VERSION,
-            };
+              input: text.slice(0, 4000),
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const json = await response.json();
+            const vec = json?.data?.[0]?.embedding || json?.embedding;
+            if (Array.isArray(vec) && vec.length === this.DIMENSIONS) {
+              const normalized = this.normalizeVector(vec);
+              return {
+                vector: normalized,
+                provider: "bge-m3",
+                model: "BAAI/bge-m3",
+                dimensions: this.DIMENSIONS,
+                modelVersion: this.MODEL_VERSION,
+              };
+            }
           }
+        } catch (err: any) {
+          console.warn("[EmbeddingService] Échec appel BGE-M3 externe (" + (err.message || "timeout") + "), passage au repli lexical certifié.");
         }
-      } catch (err: any) {
-        console.warn("[EmbeddingService] Échec appel BGE-M3 externe (" + (err.message || "timeout") + "), passage au repli lexical certifié.");
       }
     }
 

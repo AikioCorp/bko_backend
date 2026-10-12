@@ -141,4 +141,9 @@ export interface RecommendationBatchResponse {
   trending?: any[];
   latestEpisodes?: any[];
   categoryShelves?: any[];
+  feed?: {
+    items: any[];
+    nextCursor: string | null;
+    hasMore: boolean;
+  };
 }

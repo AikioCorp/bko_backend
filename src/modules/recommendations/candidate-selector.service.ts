@@ -18,13 +18,31 @@ export class CandidateSelectorService {
   static async selectEpisodeCandidates(
     profile: UserInterestProfile | null,
     countryId = "all",
-    limit = 60
+    limit = 60,
+    categoryIdOrSlug = "all"
   ): Promise<RecommendationCandidateEpisode[]> {
+    const categoryFilter = categoryIdOrSlug && categoryIdOrSlug !== "all"
+      ? {
+          categories: {
+            some: {
+              category: {
+                OR: [
+                  { id: categoryIdOrSlug },
+                  { slug: categoryIdOrSlug },
+                  { name: { equals: categoryIdOrSlug, mode: "insensitive" as const } },
+                ],
+              },
+            },
+          },
+        }
+      : {};
+
     const publishedFilter = {
       status: "PUBLISHED" as const,
       podcast: {
         status: "PUBLISHED" as const,
         ...(countryId !== "all" ? { countryId } : {}),
+        ...categoryFilter,
       },
     };
 
@@ -202,12 +220,30 @@ export class CandidateSelectorService {
   static async selectPodcastCandidates(
     profile: UserInterestProfile | null,
     countryId = "all",
-    limit = 40
+    limit = 40,
+    categoryIdOrSlug = "all"
   ): Promise<RecommendationCandidatePodcast[]> {
+    const categoryFilter = categoryIdOrSlug && categoryIdOrSlug !== "all"
+      ? {
+          categories: {
+            some: {
+              category: {
+                OR: [
+                  { id: categoryIdOrSlug },
+                  { slug: categoryIdOrSlug },
+                  { name: { equals: categoryIdOrSlug, mode: "insensitive" as const } },
+                ],
+              },
+            },
+          },
+        }
+      : {};
+
     const publishedFilter = {
       status: "PUBLISHED" as const,
       episodes: { some: { status: "PUBLISHED" as const } },
       ...(countryId !== "all" ? { countryId } : {}),
+      ...categoryFilter,
     };
 
     const excludedPodcastIds = new Set<string>();
@@ -267,7 +303,7 @@ export class CandidateSelectorService {
           for (const s of similar) {
             if (!excludedPodcastIds.has(s.podcastId) && !followedPodcastIds.has(s.podcastId)) {
               const p = await prisma.podcast.findUnique({
-                where: { id: s.podcastId, status: "PUBLISHED" },
+                where: { id: s.podcastId, status: "PUBLISHED", ...categoryFilter },
                 include: {
                   categories: { include: { category: true } },
                   primaryLanguage: true,
@@ -313,5 +349,89 @@ export class CandidateSelectorService {
     }
 
     return Array.from(candidateMap.values()).slice(0, limit);
+  }
+
+  /**
+   * Sélectionne les épisodes paginés pour le défilement infini d'accueil
+   */
+  static async selectFeedEpisodes(
+    profile: UserInterestProfile | null,
+    countryId = "all",
+    limit = 12,
+    cursor?: string,
+    categoryIdOrSlug = "all"
+  ): Promise<{ items: any[]; nextCursor: string | null; hasMore: boolean }> {
+    const offset = cursor ? Math.max(0, parseInt(cursor, 10) || 0) : 0;
+    const take = Math.min(30, Math.max(1, limit));
+
+    const categoryFilter = categoryIdOrSlug && categoryIdOrSlug !== "all"
+      ? {
+          categories: {
+            some: {
+              category: {
+                OR: [
+                  { id: categoryIdOrSlug },
+                  { slug: categoryIdOrSlug },
+                  { name: { equals: categoryIdOrSlug, mode: "insensitive" as const } },
+                ],
+              },
+            },
+          },
+        }
+      : {};
+
+    const publishedFilter = {
+      status: "PUBLISHED" as const,
+      podcast: {
+        status: "PUBLISHED" as const,
+        ...(countryId !== "all" ? { countryId } : {}),
+        ...categoryFilter,
+      },
+    };
+
+    const excludedEpisodeIds = new Set<string>();
+    const excludedPodcastIds = new Set<string>();
+
+    if (profile?.userId) {
+      const feedback = await prisma.userContentFeedback.findMany({
+        where: { userId: profile.userId },
+      });
+      for (const fb of feedback) {
+        if (fb.action === "NOT_INTERESTED" || fb.action === "EXCLUDE_FROM_PROFILE") {
+          if (fb.episodeId) excludedEpisodeIds.add(fb.episodeId);
+        }
+        if (fb.action === "HIDE_PODCAST" && fb.podcastId) {
+          excludedPodcastIds.add(fb.podcastId);
+        }
+      }
+    }
+
+    const episodes = await prisma.episode.findMany({
+      where: {
+        ...publishedFilter,
+        id: { notIn: Array.from(excludedEpisodeIds) },
+        podcastId: { notIn: Array.from(excludedPodcastIds) },
+      },
+      orderBy: { publishedAt: "desc" },
+      skip: offset,
+      take: take + 1,
+      include: {
+        podcast: {
+          include: { categories: { include: { category: true } } },
+        },
+        mediaSources: true,
+        language: true,
+      },
+    });
+
+    const hasMore = episodes.length > take;
+    const pageItems = hasMore ? episodes.slice(0, take) : episodes;
+    const nextCursor = hasMore ? String(offset + take) : null;
+
+    return {
+      items: pageItems,
+      nextCursor,
+      hasMore,
+    };
   }
 }

@@ -47,6 +47,11 @@ export class UserProfileService {
     });
     if (!user) return null;
 
+    // Récupération de l'ancien profil pour préserver les métadonnées et respecter le jalon de réinitialisation
+    const prevProfile = await prisma.userRecommendationProfile.findUnique({ where: { userId } });
+    const resetAtStr = (prevProfile?.recentSignals as any)?.resetAt;
+    const resetAt = resetAtStr ? new Date(resetAtStr) : null;
+
     // 1. Préférences explicites
     const [topicPrefs, langPrefs, countryPrefs] = await Promise.all([
       prisma.userTopicPreference.findMany({ where: { userId }, select: { topicId: true } }),
@@ -86,11 +91,14 @@ export class UserProfileService {
     }
 
     // 4. Historique de lecture (30 derniers jours avec décroissance exponentielle)
+    // Respecte strictement le jalon de réinitialisation non destructive (resetAt)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const minListenDate = resetAt && resetAt > thirtyDaysAgo ? resetAt : thirtyDaysAgo;
+
     const history = await prisma.playbackHistory.findMany({
       where: {
         userId,
-        lastPlayedAt: { gte: thirtyDaysAgo },
+        lastPlayedAt: { gte: minListenDate },
         episode: { id: { notIn: Array.from(excludedEpisodes) } },
       },
       orderBy: { lastPlayedAt: "desc" },
@@ -105,9 +113,9 @@ export class UserProfileService {
       },
     });
 
-    // 5. Sessions d'écoute réelles
+    // 5. Sessions d'écoute réelles (exclut également les sessions antérieures à resetAt)
     const sessions = await prisma.listeningSession.findMany({
-      where: { userId, startedAt: { gte: thirtyDaysAgo } },
+      where: { userId, startedAt: { gte: minListenDate } },
       orderBy: { lastActiveAt: "desc" },
       take: 50,
       include: {
@@ -216,7 +224,6 @@ export class UserProfileService {
     const hash = UserProfileService.hashUserId(userId);
     const experimentVariant = hash % 2 === 0 ? "control" : "variant_hybrid_v1";
 
-    const prevProfile = await prisma.userRecommendationProfile.findUnique({ where: { userId } });
     const personalizationActive = prevProfile?.personalizationActive ?? true;
     const onboardingCompleted =
       prevProfile?.onboardingCompleted ?? (topicPrefs.length > 0 || langPrefs.length > 0);
@@ -224,6 +231,7 @@ export class UserProfileService {
     const profileVersion = (prevProfile?.profileVersion ?? 0) + 1;
 
     const recentSignals = {
+      ...(resetAtStr ? { resetAt: resetAtStr } : {}),
       lastInteractedPodcast: history[0]?.episode?.podcastId || follows[0]?.podcastId,
       lastInteractedCategory: history[0]?.episode?.podcast?.categories?.[0]?.categoryId,
       repeatedListens,
@@ -339,20 +347,66 @@ export class UserProfileService {
   }
 
   /**
-   * Réinitialise le profil de recommandation d'un utilisateur
-   * - Supprime les retours négatifs
-   * - Détache / archive les anciennes sessions d'écoute pour qu'elles ne recréent pas immédiatement les mêmes affinités
-   * - Reconstruit un profil d'intérêt totalement neutre et vierge
+   * Réinitialise de manière NON DESTRUCTIVE le profil de recommandation d'un utilisateur :
+   * - Conserve scrupuleusement l'historique d'écoute (PlaybackHistory) pour la reprise de lecture dans le lecteur.
+   * - Conserve les sessions d'écoute (ListeningSession) et les contenus masqués.
+   * - Pose un jalon temporel `resetAt` : les écoutes antérieures au reset sont ignorées pour le calcul d'affinités.
+   * - Remet à zéro les scores d'affinités calculés (thèmes, catégories, langues).
+   * - Incrémente la version des préférences.
    */
-  static async resetProfile(userId: string) {
-    await prisma.userContentFeedback.deleteMany({ where: { userId } });
-    // Archiver les anciennes sessions de lecture en les dissociant du profil de recommandation
-    await prisma.listeningSession.deleteMany({ where: { userId } });
-    await prisma.playbackHistory.deleteMany({ where: { userId } });
-    await prisma.userRecommendationProfile.deleteMany({ where: { userId } });
-    const rebuilt = await this.rebuildProfile(userId);
+  static async resetProfile(userId: string): Promise<UserInterestProfile | null> {
+    const existing = await prisma.userRecommendationProfile.findUnique({
+      where: { userId },
+    });
+
+    const resetTimestamp = new Date();
+    const currentSignals = (existing?.recentSignals as any) || {};
+    const updatedSignals = {
+      ...currentSignals,
+      resetAt: resetTimestamp.toISOString(),
+    };
+
+    const newPrefVersion = (existing?.preferencesVersion || 1) + 1;
+    const newProfileVersion = (existing?.profileVersion || 0) + 1;
+
+    await prisma.userRecommendationProfile.upsert({
+      where: { userId },
+      update: {
+        topicScores: {},
+        categoryScores: {},
+        languageScores: {},
+        recentSignals: updatedSignals,
+        preferencesVersion: newPrefVersion,
+        profileVersion: newProfileVersion,
+        computedAt: resetTimestamp,
+      },
+      create: {
+        userId,
+        personalizationActive: true,
+        onboardingCompleted: false,
+        preferencesVersion: newPrefVersion,
+        profileVersion: newProfileVersion,
+        topicScores: {},
+        categoryScores: {},
+        languageScores: {},
+        recentSignals: updatedSignals,
+        computedAt: resetTimestamp,
+      },
+    });
+
     await this.invalidateProfile(userId);
-    return rebuilt;
+    return this.rebuildProfile(userId);
+  }
+
+  /**
+   * Efface l'ensemble des retours négatifs et démasque les émissions masquées (sur demande explicite)
+   */
+  static async clearAllFeedback(userId: string) {
+    const result = await prisma.userContentFeedback.deleteMany({
+      where: { userId },
+    });
+    await this.invalidateProfile(userId);
+    return { count: result.count, success: true };
   }
 
   /**

@@ -37,9 +37,11 @@ export class PersonalizationEngineService {
   static async getPersonalizedHome(
     userId?: string,
     anonymousId?: string,
-    countryId = "all"
+    countryId = "all",
+    category = "all",
+    cursor?: string
   ): Promise<RecommendationBatchResponse> {
-    const cacheKey = `home:${userId || "anon"}:${anonymousId || "none"}:${countryId}`;
+    const cacheKey = `home:${userId || "anon"}:${anonymousId || "none"}:${countryId}:${category}:${cursor || "0"}`;
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.data;
@@ -96,8 +98,18 @@ export class PersonalizationEngineService {
 
     // 3. Extraction et classement des candidats dynamiques
     const [episodeCandidates, podcastCandidates] = await Promise.all([
-      CandidateSelectorService.selectEpisodeCandidates(isPersonalized ? profile : null, countryId, 80),
-      CandidateSelectorService.selectPodcastCandidates(isPersonalized ? profile : null, countryId, 50),
+      CandidateSelectorService.selectEpisodeCandidates(
+        isPersonalized ? profile : null,
+        countryId,
+        80,
+        category
+      ),
+      CandidateSelectorService.selectPodcastCandidates(
+        isPersonalized ? profile : null,
+        countryId,
+        50,
+        category
+      ),
     ]);
 
     // Score & Tri des épisodes
@@ -116,8 +128,10 @@ export class PersonalizationEngineService {
     const diversifiedEpisodes = DiversificationService.diversifyEpisodes(episodeCandidates, 2, 40);
     const diversifiedPodcasts = DiversificationService.diversifyPodcasts(podcastCandidates, 25);
 
-    // 4. Continuer l'écoute (si utilisateur connecté)
+    // 4. Continuer l'écoute (disponible pour tout utilisateur connecté, même si personnalisation désactivée)
     let continueListeningItems: any[] = [];
+    let newFromFollowsItems: any[] = [];
+
     if (userId) {
       const negativeFeedback = await prisma.userContentFeedback.findMany({
         where: { userId },
@@ -131,6 +145,7 @@ export class PersonalizationEngineService {
         negativeFeedback.filter((f) => f.action === "HIDE_PODCAST" && f.podcastId).map((f) => f.podcastId!)
       );
 
+      // A. Historique de reprise
       const history = await prisma.playbackHistory.findMany({
         where: {
           userId,
@@ -160,13 +175,57 @@ export class PersonalizationEngineService {
         positionSeconds: h.positionSeconds,
         completed: h.completed,
       }));
+
+      // B. Du nouveau dans vos émissions (suivis)
+      const follows = await prisma.podcastFollow.findMany({
+        where: { userId },
+        select: { podcastId: true },
+      });
+      const followedPodIds = follows
+        .map((f) => f.podcastId)
+        .filter((id) => !excludedPodIds.has(id));
+
+      if (followedPodIds.length > 0) {
+        const completedHistory = await prisma.playbackHistory.findMany({
+          where: { userId, completed: true },
+          select: { episodeId: true },
+        });
+        const completedEpIds = new Set(completedHistory.map((h) => h.episodeId));
+
+        const followEps = await prisma.episode.findMany({
+          where: {
+            podcastId: { in: followedPodIds },
+            id: {
+              notIn: [...Array.from(excludedEpIds), ...Array.from(completedEpIds)],
+            },
+            status: "PUBLISHED",
+            podcast: { status: "PUBLISHED" },
+          },
+          orderBy: { publishedAt: "desc" },
+          take: 12,
+          include: {
+            podcast: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                cover: true,
+                categories: { include: { category: true } },
+              },
+            },
+            mediaSources: true,
+            language: true,
+          },
+        });
+        newFromFollowsItems = followEps;
+      }
     }
 
     // 5. Assemblage des sections de la page d'accueil
     const sections: RecommendationSectionDto[] = [];
     let sectionPos = 0;
 
-    // A. Continuer l'écoute
+    // A. Continuer l'écoute (toujours en tête si l'utilisateur a une session en cours)
     if (continueListeningItems.length > 0) {
       sections.push({
         id: "section_continue_listening",
@@ -195,7 +254,36 @@ export class PersonalizationEngineService {
       });
     }
 
-    // B. Sections éditoriales (MANUAL / HYBRID)
+    // B. Du nouveau dans vos émissions
+    if (newFromFollowsItems.length > 0) {
+      sections.push({
+        id: "section_new_from_follows",
+        slug: "new-from-follows",
+        title: "Du nouveau dans vos émissions",
+        subtitle: "Les derniers épisodes des podcasts que vous suivez",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: true,
+        priority: 95,
+        reason: "Émissions suivies",
+        items: newFromFollowsItems.map((ep, idx) => ({
+          id: `item_follow_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: `Nouvel épisode de ${ep.podcast?.name}`,
+          attribution: {
+            batchId,
+            engineVersion: this.ENGINE_VERSION,
+            variant,
+            sectionSlug: "new-from-follows",
+          },
+          episode: ep,
+        })),
+      });
+    }
+
+    // C. Sections éditoriales (MANUAL / HYBRID)
     for (const sec of editorialSections) {
       if (sec.type === "HERO") continue; // Hero traité en bannière séparée
 
@@ -237,14 +325,21 @@ export class PersonalizationEngineService {
       }
     }
 
-    // C. Pour Vous (Épisodes recommandés)
+    // D. Pour Vous (Épisodes recommandés)
     const forYouEpisodes = diversifiedEpisodes.slice(0, 15);
     if (forYouEpisodes.length > 0) {
+      const isFiltered = category !== "all";
       sections.push({
         id: "section_for_you_episodes",
         slug: "for-you",
-        title: isPersonalized ? "Recommandé pour vous" : "Épisodes à la une",
-        subtitle: isPersonalized
+        title: isFiltered
+          ? `Sélection : ${category}`
+          : isPersonalized
+          ? "Recommandé pour vous"
+          : "Épisodes à la une",
+        subtitle: isFiltered
+          ? "Contenus filtrés par thématique"
+          : isPersonalized
           ? "Selon vos centres d'intérêt et vos dernières écoutes"
           : "Les épisodes les plus captivants du moment",
         type: "EPISODE_ROW",
@@ -269,7 +364,7 @@ export class PersonalizationEngineService {
       });
     }
 
-    // D. Émissions à découvrir
+    // E. Émissions à découvrir
     const discoverPodcasts = diversifiedPodcasts.slice(0, 12);
     if (discoverPodcasts.length > 0) {
       sections.push({
@@ -299,16 +394,44 @@ export class PersonalizationEngineService {
       });
     }
 
-    // 6. Données de compatibilité historique (pour l'ancienne version mobile & web si requise)
-    const [trending, categoryShelves] = await Promise.all([
-      DiscoveryService.getTrendingPodcasts(30, countryId),
-      DiscoveryService.getCategoryShelves(countryId),
-    ]);
+    // 6. Données de tendances légères et défilement infini initial
+    const trending = await DiscoveryService.getTrendingPodcasts(15, countryId).catch(() => []);
+
+    // Défilement infini initial (12 épisodes avec pagination)
+    const feedResult = await CandidateSelectorService.selectFeedEpisodes(
+      isPersonalized ? profile : null,
+      countryId,
+      12,
+      cursor,
+      category
+    );
+
+    const feed = {
+      items: feedResult.items.map((ep, idx) => ({
+        id: `feed_${ep.id}`,
+        targetType: "EPISODE",
+        position: (parseInt(cursor || "0", 10) || 0) + idx,
+        reason: "À écouter",
+        attribution: {
+          batchId,
+          engineVersion: this.ENGINE_VERSION,
+          variant,
+          sectionSlug: "infinite-feed",
+        },
+        episode: ep,
+      })),
+      nextCursor: feedResult.nextCursor,
+      hasMore: feedResult.hasMore,
+    };
 
     let heroSlides: any[] = [];
     try {
       // Si la personnalisation est désactivée, passer undefined pour générer une bannière neutre (populaire / nouveautés)
-      heroSlides = await HeroService.build(isPersonalized ? userId : undefined, diversifiedEpisodes, trending);
+      heroSlides = await HeroService.build(
+        isPersonalized ? userId : undefined,
+        diversifiedEpisodes,
+        trending
+      );
     } catch (_) {
       heroSlides = [];
     }
@@ -328,7 +451,8 @@ export class PersonalizationEngineService {
       heroEpisode,
       trending,
       latestEpisodes: diversifiedEpisodes.slice(0, 24),
-      categoryShelves,
+      categoryShelves: [], // Allégé : Les catégories en bas sont supprimées pour des performances ultra-rapides
+      feed,
     };
 
     // Mise en cache
@@ -339,6 +463,56 @@ export class PersonalizationEngineService {
     });
 
     return response;
+  }
+
+  /**
+   * Récupère uniquement la suite paginée du flux (Infinite Scroll)
+   */
+  static async getFeed(
+    userId?: string,
+    anonymousId?: string,
+    countryId = "all",
+    category = "all",
+    cursor?: string,
+    limit = 12
+  ) {
+    let profile: UserInterestProfile | null = null;
+    if (userId) {
+      try {
+        profile = await UserProfileService.getOrBuildProfile(userId);
+      } catch (_) {}
+    }
+    const isPersonalized = profile ? profile.personalizationActive : false;
+    const batchId = `rec_feed_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+    const variant = profile?.experimentVariant || "control";
+
+    const feedResult = await CandidateSelectorService.selectFeedEpisodes(
+      isPersonalized ? profile : null,
+      countryId,
+      limit,
+      cursor,
+      category
+    );
+
+    const offsetNum = cursor ? parseInt(cursor, 10) || 0 : 0;
+    return {
+      batchId,
+      items: feedResult.items.map((ep, idx) => ({
+        id: `feed_${ep.id}`,
+        targetType: "EPISODE",
+        position: offsetNum + idx,
+        reason: "À écouter",
+        attribution: {
+          batchId,
+          engineVersion: this.ENGINE_VERSION,
+          variant,
+          sectionSlug: "infinite-feed",
+        },
+        episode: ep,
+      })),
+      nextCursor: feedResult.nextCursor,
+      hasMore: feedResult.hasMore,
+    };
   }
 
   /**

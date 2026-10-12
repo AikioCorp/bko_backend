@@ -399,11 +399,13 @@ router.get("/search/suggestions", SearchController.suggestions);
 
 router.get("/explore", DiscoveryController.getExplore);
 router.get("/home", optionalAuthenticateToken, RecommendationController.getHome);
+router.get("/home/feed", optionalAuthenticateToken, RecommendationController.getHomeFeed);
 router.get("/trending", DiscoveryController.getTrending);
 
 // --- RECOMMANDATIONS & PERSONNALISATION ---
 router.post("/recommendations/feedback", authenticateToken, RecommendationController.postFeedback);
 router.delete("/recommendations/feedback", authenticateToken, RecommendationController.deleteFeedback);
+router.delete("/recommendations/feedback/all", authenticateToken, RecommendationController.clearAllFeedback);
 router.post("/recommendations/reset-profile", authenticateToken, RecommendationController.resetProfile);
 router.patch("/recommendations/settings", authenticateToken, RecommendationController.updateSettings);
 router.post("/recommendations/onboarding", authenticateToken, RecommendationController.completeOnboarding);
