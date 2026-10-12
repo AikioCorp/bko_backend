@@ -23,7 +23,7 @@ async function main() {
     roleMap[r] = roleRecord;
   }
 
-  const defaultAdminPassword = "Admin@Bamako2026!";
+  const defaultAdminPassword = "admin123";
   const passwordHash = await bcrypt.hash(defaultAdminPassword, BCRYPT_ROUNDS);
 
   // 2. Créer ou mettre à jour le compte admin dédié
@@ -49,8 +49,8 @@ async function main() {
     },
   });
 
-  // Associer les rôles ADMIN, SUPER_ADMIN, CREATOR à l'admin
-  const adminRoleNames = ["SUPER_ADMIN", "ADMIN", "CREATOR"];
+  // Associer les rôles ADMIN, SUPER_ADMIN, CREATOR, USER
+  const adminRoleNames = ["SUPER_ADMIN", "ADMIN", "CREATOR", "USER"];
   for (const rName of adminRoleNames) {
     const roleObj = roleMap[rName];
     if (roleObj) {
@@ -70,38 +70,40 @@ async function main() {
     }
   }
 
-  // 3. Mettre à jour également salika.famanta@gmail.com avec le même mot de passe
-  const salikaUser = await prisma.user.findUnique({
+  // 3. Créer ou mettre à jour également salika.famanta@gmail.com avec le même mot de passe
+  const salikaUser = await prisma.user.upsert({
     where: { email: "salika.famanta@gmail.com" },
+    update: {
+      passwordHash,
+      isVerified: true,
+      isSuspended: false,
+    },
+    create: {
+      email: "salika.famanta@gmail.com",
+      username: "salika",
+      fullName: "Salika Famanta",
+      passwordHash,
+      isVerified: true,
+      isSuspended: false,
+    },
   });
 
-  if (salikaUser) {
-    await prisma.user.update({
-      where: { id: salikaUser.id },
-      data: {
-        passwordHash,
-        isVerified: true,
-        isSuspended: false,
-      },
-    });
-
-    for (const rName of adminRoleNames) {
-      const roleObj = roleMap[rName];
-      if (roleObj) {
-        await prisma.userRole.upsert({
-          where: {
-            userId_roleId: {
-              userId: salikaUser.id,
-              roleId: roleObj.id,
-            },
-          },
-          update: {},
-          create: {
+  for (const rName of adminRoleNames) {
+    const roleObj = roleMap[rName];
+    if (roleObj) {
+      await prisma.userRole.upsert({
+        where: {
+          userId_roleId: {
             userId: salikaUser.id,
             roleId: roleObj.id,
           },
-        });
-      }
+        },
+        update: {},
+        create: {
+          userId: salikaUser.id,
+          roleId: roleObj.id,
+        },
+      });
     }
   }
 
