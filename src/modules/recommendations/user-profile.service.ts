@@ -425,7 +425,12 @@ export class UserProfileService {
   /**
    * Marque l'onboarding comme complété
    */
-  static async completeOnboarding(userId: string, topicIds: string[] = [], languageCodes: string[] = []) {
+  static async completeOnboarding(
+    userId: string,
+    topicIds: string[] = [],
+    languageCodes: string[] = [],
+    podcastIds: string[] = []
+  ) {
     if (topicIds.length > 0) {
       await prisma.userTopicPreference.deleteMany({ where: { userId } });
       await prisma.userTopicPreference.createMany({
@@ -437,6 +442,16 @@ export class UserProfileService {
       await prisma.userLanguagePreference.createMany({
         data: languageCodes.map((code) => ({ userId, languageCode: code })),
       });
+    }
+    if (podcastIds.length > 0) {
+      for (const pid of podcastIds) {
+        if (!pid) continue;
+        await prisma.podcastFollow.upsert({
+          where: { userId_podcastId: { userId, podcastId: pid } },
+          update: {},
+          create: { userId, podcastId: pid },
+        });
+      }
     }
 
     await prisma.userRecommendationProfile.upsert({

@@ -14,6 +14,12 @@ export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+export function isOtpTestMode(): boolean {
+  if (process.env.AUTH_OTP_MODE === "test") return true;
+  if (process.env.AUTH_OTP_MODE === "email") return false;
+  return process.env.ENABLE_DEV_OTP === "true" || process.env.NODE_ENV !== "production";
+}
+
 export class AuthService {
   static async register(params: {
     email: string;
@@ -26,6 +32,7 @@ export class AuthService {
     // Réponse générique volontairement identique que le compte existe ou non
     // (anti-énumération : on ne révèle jamais si un email/téléphone est déjà inscrit).
     const genericMessage = "Si ces informations sont valides, un code de vérification a été envoyé.";
+    const isTestMode = isOtpTestMode();
     const otpCode = crypto.randomInt(100000, 1000000).toString(); // OTP 6 chiffres cryptographiquement sûr
     const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Expiration 15 min
 
@@ -36,18 +43,25 @@ export class AuthService {
     });
 
     if (existingUser) {
-      // Compte non vérifié : on régénère un OTP (renvoi). Compte déjà vérifié : on ne fait
-      // rien. Dans les deux cas, la réponse renvoyée est strictement identique.
-      if (!existingUser.isVerified) {
-        await prisma.user.update({
-          where: { id: existingUser.id },
-          data: { otpCode: hashToken(otpCode), otpExpiresAt },
-        });
-        // Envoi sans attendre : le temps de réponse ne doit pas révéler si le compte existe.
-        void MailService.sendNow(Emails.otp(existingUser.email, otpCode));
-        return { email, message: genericMessage, ...(process.env.NODE_ENV === "development" ? { otpCode } : {}) };
+      if (existingUser.isVerified) {
+        return { email, message: genericMessage };
       }
-      return { email, message: genericMessage };
+
+      // Compte non vérifié : on régénère un véritable OTP
+      await prisma.user.update({
+        where: { id: existingUser.id },
+        data: { otpCode: hashToken(otpCode), otpExpiresAt },
+      });
+
+      if (!isTestMode) {
+        void MailService.sendNow(Emails.otp(existingUser.email, otpCode));
+      }
+
+      return {
+        email: existingUser.email,
+        message: genericMessage,
+        ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
+      };
     }
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -59,7 +73,7 @@ export class AuthService {
         phoneNumber,
         fullName,
         passwordHash,
-        isVerified: true,
+        isVerified: false,
         otpCode: hashToken(otpCode), // OTP stocké haché, jamais en clair
         otpExpiresAt,
         ...(roleUser
@@ -74,11 +88,14 @@ export class AuthService {
       },
     });
 
-    void MailService.sendNow(Emails.otp(email, otpCode));
+    if (!isTestMode) {
+      void MailService.sendNow(Emails.otp(email, otpCode));
+    }
+
     return {
       email,
       message: genericMessage,
-      ...(process.env.NODE_ENV === "development" ? { otpCode } : {}),
+      ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
     };
   }
 
@@ -120,10 +137,73 @@ export class AuthService {
     return { message: "Mot de passe modifié. Vous pouvez vous connecter." };
   }
 
-  static async verifyOtp(params: { email: string; otpCode: string }) {
-    const user = await prisma.user.findUnique({ where: { email: params.email } });
+  static async resendOtp(email: string) {
+    const genericMessage = "Si ce compte est en attente de validation, un nouveau code a été envoyé.";
+    const isTestMode = isOtpTestMode();
+    const normalizedEmail = email.trim().toLowerCase();
 
-    if (!user || !user.otpCode || user.otpCode !== hashToken(params.otpCode)) {
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+    });
+
+    if (!user || user.isVerified || user.isSuspended) {
+      // Anti-énumération
+      return { email: normalizedEmail, message: genericMessage };
+    }
+
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode: hashToken(otpCode),
+        otpExpiresAt,
+      },
+    });
+
+    if (!isTestMode) {
+      void MailService.sendNow(Emails.otp(user.email, otpCode));
+    }
+
+    return {
+      email: user.email,
+      message: "Un nouveau code de vérification a été généré.",
+      ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
+    };
+  }
+
+  static async verifyOtp(params: {
+    email: string;
+    otpCode: string;
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: params.email.trim(), mode: "insensitive" } },
+      include: {
+        userRoles: {
+          include: { role: true },
+        },
+        recommendationProfile: {
+          select: { onboardingCompleted: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    const inputCode = String(params.otpCode || "").trim();
+    if (!/^\d{6}$/.test(inputCode)) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    const hashedInput = hashToken(inputCode);
+    if (!user.otpCode || user.otpCode !== hashedInput) {
       throw new Error("INVALID_CREDENTIALS");
     }
 
@@ -131,6 +211,7 @@ export class AuthService {
       throw new Error("RESET_TOKEN_EXPIRED");
     }
 
+    // Valider le compte et consommer l'OTP
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -140,7 +221,66 @@ export class AuthService {
       },
     });
 
-    return { message: "Compte vérifié avec succès" };
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    // Générer Access Token (15m)
+    const accessToken = jwt.sign(
+      { id: user.id, email: user.email, roles },
+      JWT_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    // Générer Refresh Token (7 jours)
+    const rawRefreshToken = crypto.randomBytes(40).toString("hex");
+    const tokenHash = hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    let device = null;
+    if (params.deviceType) {
+      device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          deviceType: params.deviceType || "MOBILE",
+          deviceName: params.deviceName || "Appareil Mobile",
+        },
+      });
+    }
+
+    await Promise.all([
+      prisma.session.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash: tokenHash,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          expiresAt,
+        },
+      }),
+      prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash: tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        avatar: user.avatar,
+        roles,
+        isVerified: true,
+        onboardingCompleted: user.recommendationProfile?.onboardingCompleted ?? false,
+      },
+      accessToken,
+      refreshToken: rawRefreshToken,
+      message: "Compte vérifié avec succès",
+    };
   }
 
   static async login(params: {

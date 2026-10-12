@@ -116,6 +116,19 @@ export interface RecommendationItemDto {
   podcast?: any;
 }
 
+export interface SectionDiscoveryContext {
+  targetUrl: string;
+  view: "episodes" | "podcasts" | "collections";
+  category?: string;
+  topic?: string;
+  language?: string;
+  duration?: "SHORT" | "MEDIUM" | "LONG";
+  sort?: "recent" | "popular" | "oldest";
+  collectionSlug?: string;
+  recommendationStrategy?: string;
+  label?: string;
+}
+
 export interface RecommendationSectionDto {
   id: string;
   slug: string;
@@ -128,6 +141,7 @@ export interface RecommendationSectionDto {
   priority: number;
   reason?: string;
   items: RecommendationItemDto[];
+  discoveryContext?: SectionDiscoveryContext;
 }
 
 export interface RecommendationBatchResponse {

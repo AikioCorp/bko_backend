@@ -34,6 +34,7 @@ export class UserService {
         topicPreferences: { include: { topic: true } },
         countryPreferences: { include: { country: true } },
         notificationPreference: true,
+        recommendationProfile: { select: { onboardingCompleted: true } },
       },
     });
 

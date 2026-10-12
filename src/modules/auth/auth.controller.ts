@@ -56,13 +56,50 @@ export class AuthController {
     }
   }
 
-  static async verifyOtp(req: Request, res: Response) {
+  static async resendOtp(req: Request, res: Response) {
     try {
-      const { email, otpCode } = req.body;
-      const result = await AuthService.verifyOtp({ email, otpCode });
+      const email = String(req.body?.email ?? "").trim();
+      if (!email || !email.includes("@")) {
+        return sendError(res, "Adresse email requise", "VALIDATION_ERROR", 400);
+      }
+      const result = await AuthService.resendOtp(email);
       return sendSuccess(res, result);
     } catch (error: any) {
-      return sendError(res, error.message || "Code OTP invalide ou expiré", "INVALID_CREDENTIALS", 400);
+      return sendError(res, error.message || "Erreur lors du renvoi du code", "INTERNAL_ERROR", 500);
+    }
+  }
+
+  static async verifyOtp(req: Request, res: Response) {
+    try {
+      const { email, otpCode, deviceType, deviceName } = req.body;
+      if (!email || !otpCode) {
+        return sendError(res, "Email et code OTP requis", "VALIDATION_ERROR", 400);
+      }
+      const result = await AuthService.verifyOtp({
+        email,
+        otpCode,
+        deviceType,
+        deviceName,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      // Cookie HTTPOnly pour le Web
+      if (result.refreshToken) {
+        res.cookie("refreshToken", result.refreshToken, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+      }
+
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      if (error.message === "RESET_TOKEN_EXPIRED") {
+        return sendError(res, "Le code de vérification a expiré", "OTP_EXPIRED", 400);
+      }
+      return sendError(res, "Code de vérification incorrect ou expiré", "INVALID_CREDENTIALS", 400);
     }
   }
 

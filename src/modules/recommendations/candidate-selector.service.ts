@@ -5,6 +5,7 @@ import {
   UserInterestProfile,
 } from "./recommendation.types.js";
 import { EmbeddingService } from "./embedding.service.js";
+import { HybridRankingStrategy } from "./ranking.service.js";
 
 export class CandidateSelectorService {
   /**
@@ -406,6 +407,11 @@ export class CandidateSelectorService {
       }
     }
 
+    const ranker = new HybridRankingStrategy();
+
+    // Récupérer un ensemble de candidats plus large pour le tri personnalisé si profil actif
+    const fetchTake = profile?.personalizationActive ? Math.max(take * 3, 30) : take + 1;
+
     const episodes = await prisma.episode.findMany({
       where: {
         ...publishedFilter,
@@ -414,7 +420,7 @@ export class CandidateSelectorService {
       },
       orderBy: { publishedAt: "desc" },
       skip: offset,
-      take: take + 1,
+      take: fetchTake,
       include: {
         podcast: {
           include: { categories: { include: { category: true } } },
@@ -424,8 +430,24 @@ export class CandidateSelectorService {
       },
     });
 
+    let scoredItems: any[] = episodes.map((ep) => {
+      const candidate: any = {
+        ...ep,
+        candidateSource: "catalog_fresh",
+        matchReason: "À découvrir",
+      };
+      if (profile?.personalizationActive) {
+        candidate.score = ranker.scoreEpisode(candidate, profile);
+      }
+      return candidate;
+    });
+
+    if (profile?.personalizationActive) {
+      scoredItems.sort((a, b) => (b.score || 0) - (a.score || 0));
+    }
+
     const hasMore = episodes.length > take;
-    const pageItems = hasMore ? episodes.slice(0, take) : episodes;
+    const pageItems = scoredItems.slice(0, take);
     const nextCursor = hasMore ? String(offset + take) : null;
 
     return {

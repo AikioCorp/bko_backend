@@ -179,11 +179,12 @@ export class RecommendationController {
   static async completeOnboarding(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
-      const { topicIds, languageCodes } = req.body;
+      const { topicIds, languageCodes, podcastIds } = req.body;
       const profile = await UserProfileService.completeOnboarding(
         req.user.id,
         topicIds || [],
-        languageCodes || []
+        languageCodes || [],
+        podcastIds || []
       );
       PersonalizationEngineService.invalidateUserCache(req.user.id);
       return sendSuccess(res, profile, "Onboarding enregistré");

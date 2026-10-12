@@ -69,4 +69,34 @@ describe("Home Category Filter and Infinite Feed Integration", { timeout: 30000 
       expect(hasDuplicate).toBe(false);
     }
   });
+
+  it("handles rapid category switching and query simulation safely", async () => {
+    // Simuler des requêtes concurrentes avec différentes catégories
+    const queries = ["all", "culture", "all", "technologie", "all"].map((cat) =>
+      PersonalizationEngineService.getFeed(undefined, undefined, "all", cat, undefined, 6)
+    );
+    const results = await Promise.all(queries);
+    expect(results.length).toBe(5);
+    for (const res of results) {
+      expect(res.items).toBeDefined();
+      expect(Array.isArray(res.items)).toBe(true);
+      expect(typeof res.hasMore).toBe("boolean");
+    }
+  });
+
+  it("handles non-existent or empty category gracefully", async () => {
+    const emptyResult = await PersonalizationEngineService.getFeed(
+      undefined,
+      undefined,
+      "all",
+      "non-existent-category-slug-9999",
+      undefined,
+      10
+    );
+    expect(emptyResult).toBeDefined();
+    expect(emptyResult.items.length).toBe(0);
+    expect(emptyResult.hasMore).toBe(false);
+    expect(emptyResult.nextCursor).toBeNull();
+  });
 });
+

@@ -225,7 +225,7 @@ export class PersonalizationEngineService {
     const sections: RecommendationSectionDto[] = [];
     let sectionPos = 0;
 
-    // A. Continuer l'écoute (toujours en tête si l'utilisateur a une session en cours)
+    // A. Continuer l'écoute (utilisateurs connectés ayant une lecture en cours)
     if (continueListeningItems.length > 0) {
       sections.push({
         id: "section_continue_listening",
@@ -238,6 +238,11 @@ export class PersonalizationEngineService {
         isFixedPlacement: true,
         priority: 100,
         reason: "Reprendre votre lecture en cours",
+        discoveryContext: {
+          targetUrl: "/library",
+          view: "episodes",
+          label: "Reprendre l'écoute",
+        },
         items: continueListeningItems.map((ep, idx) => ({
           id: `item_resume_${ep.id}`,
           targetType: "EPISODE",
@@ -254,7 +259,7 @@ export class PersonalizationEngineService {
       });
     }
 
-    // B. Du nouveau dans vos émissions
+    // B. Du nouveau dans vos émissions (abonnements de l'utilisateur connecté)
     if (newFromFollowsItems.length > 0) {
       sections.push({
         id: "section_new_from_follows",
@@ -267,6 +272,11 @@ export class PersonalizationEngineService {
         isFixedPlacement: true,
         priority: 95,
         reason: "Émissions suivies",
+        discoveryContext: {
+          targetUrl: "/library",
+          view: "episodes",
+          label: "Mes abonnements",
+        },
         items: newFromFollowsItems.map((ep, idx) => ({
           id: `item_follow_${ep.id}`,
           targetType: "EPISODE",
@@ -283,9 +293,9 @@ export class PersonalizationEngineService {
       });
     }
 
-    // C. Sections éditoriales (MANUAL / HYBRID)
+    // C. Sections éditoriales configurées en base (MANUAL / HYBRID)
     for (const sec of editorialSections) {
-      if (sec.type === "HERO") continue; // Hero traité en bannière séparée
+      if (sec.type === "HERO") continue;
 
       const validItems = sec.items.filter((item) => {
         if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
@@ -294,6 +304,11 @@ export class PersonalizationEngineService {
       });
 
       if (validItems.length > 0 || sec.sourceMode === "HYBRID") {
+        const collectionSlug = validItems[0]?.collection?.slug;
+        const targetUrl = collectionSlug
+          ? `/collections/${collectionSlug}`
+          : (sec.type === "PODCAST_ROW" ? "/explore?view=podcasts" : "/explore?view=episodes");
+
         const sectionItems = validItems.map((item, idx) => ({
           id: `item_ed_${item.id}`,
           targetType: (item.podcast ? "PODCAST" : "EPISODE") as "PODCAST" | "EPISODE",
@@ -320,17 +335,56 @@ export class PersonalizationEngineService {
           isFixedPlacement: sec.isFixedPlacement,
           priority: sec.priority,
           reason: "Sélection BKO Podcast",
+          discoveryContext: {
+            targetUrl,
+            view: sec.type === "PODCAST_ROW" ? "podcasts" : (collectionSlug ? "collections" : "episodes"),
+            collectionSlug,
+            label: sec.title,
+          },
           items: sectionItems.slice(0, sec.maxItems || 12),
         });
       }
     }
 
-    // D. Pour Vous (Épisodes recommandés)
-    const forYouEpisodes = diversifiedEpisodes.slice(0, 15);
+    // Récupération optimisée de compléments pour garantir les 15 sections riches
+    const [shortEpsDb, longEpsDb, recentEpsDb, allPodcastsDb] = await Promise.all([
+      prisma.episode.findMany({
+        where: { status: "PUBLISHED", durationSeconds: { lte: 1200, gt: 0 }, podcast: { status: "PUBLISHED" } },
+        take: 12,
+        orderBy: { publishedAt: "desc" },
+        include: { podcast: { select: { id: true, name: true, slug: true, cover: true } }, mediaSources: true, language: true },
+      }),
+      prisma.episode.findMany({
+        where: { status: "PUBLISHED", durationSeconds: { gte: 2400 }, podcast: { status: "PUBLISHED" } },
+        take: 12,
+        orderBy: { publishedAt: "desc" },
+        include: { podcast: { select: { id: true, name: true, slug: true, cover: true } }, mediaSources: true, language: true },
+      }),
+      prisma.episode.findMany({
+        where: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } },
+        take: 14,
+        orderBy: { publishedAt: "desc" },
+        include: { podcast: { select: { id: true, name: true, slug: true, cover: true } }, mediaSources: true, language: true },
+      }),
+      prisma.podcast.findMany({
+        where: { status: "PUBLISHED", episodes: { some: { status: "PUBLISHED" } } },
+        take: 30,
+        orderBy: { updatedAt: "desc" },
+        include: {
+          categories: { include: { category: true } },
+          primaryLanguage: true,
+          _count: { select: { episodes: true, followers: true } },
+        },
+      }),
+    ]);
+
+    const isFiltered = category !== "all";
+
+    // 1. Épisodes à la une (ou Recommandé pour vous)
+    const forYouEpisodes = diversifiedEpisodes.slice(0, 12);
     if (forYouEpisodes.length > 0) {
-      const isFiltered = category !== "all";
       sections.push({
-        id: "section_for_you_episodes",
+        id: "section_featured_episodes",
         slug: "for-you",
         title: isFiltered
           ? `Sélection : ${category}`
@@ -346,26 +400,33 @@ export class PersonalizationEngineService {
         sourceMode: "AUTOMATIC",
         position: sectionPos++,
         isFixedPlacement: false,
-        priority: 80,
+        priority: 85,
         reason: isPersonalized ? "Adapté à vos goûts" : "Sélection populaire",
+        discoveryContext: {
+          targetUrl: isFiltered
+            ? `/explore?view=episodes&category=${category}`
+            : isPersonalized
+            ? "/explore?view=episodes&strategy=for-you"
+            : "/explore?view=episodes&sort=popular",
+          view: "episodes",
+          category: isFiltered ? category : undefined,
+          sort: isPersonalized ? undefined : "popular",
+          recommendationStrategy: isPersonalized ? "for-you" : undefined,
+          label: isPersonalized ? "Recommandé pour vous" : "Épisodes à la une",
+        },
         items: forYouEpisodes.map((ep, idx) => ({
           id: `item_foryou_${ep.id}`,
           targetType: "EPISODE",
           position: idx,
           reason: ep.matchReason || "Pour vous",
-          attribution: {
-            batchId,
-            engineVersion: this.ENGINE_VERSION,
-            variant,
-            sectionSlug: "for-you",
-          },
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "for-you" },
           episode: ep,
         })),
       });
     }
 
-    // E. Émissions à découvrir
-    const discoverPodcasts = diversifiedPodcasts.slice(0, 12);
+    // 2. Émissions à découvrir
+    const discoverPodcasts = diversifiedPodcasts.slice(0, 10);
     if (discoverPodcasts.length > 0) {
       sections.push({
         id: "section_discover_podcasts",
@@ -376,20 +437,427 @@ export class PersonalizationEngineService {
         sourceMode: "AUTOMATIC",
         position: sectionPos++,
         isFixedPlacement: false,
-        priority: 70,
+        priority: 80,
         reason: "Découverte de séries",
+        discoveryContext: {
+          targetUrl: isFiltered ? `/explore?view=podcasts&category=${category}` : "/explore?view=podcasts&sort=popular",
+          view: "podcasts",
+          category: isFiltered ? category : undefined,
+          sort: "popular",
+          label: "Émissions à découvrir",
+        },
         items: discoverPodcasts.map((pod, idx) => ({
           id: `item_discpod_${pod.id}`,
           targetType: "PODCAST",
           position: idx,
           reason: pod.matchReason || "Émission recommandée",
-          attribution: {
-            batchId,
-            engineVersion: this.ENGINE_VERSION,
-            variant,
-            sectionSlug: "discover-podcasts",
-          },
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "discover-podcasts" },
           podcast: pod,
+        })),
+      });
+    }
+
+    // 3. Nouveaux épisodes
+    if (recentEpsDb.length > 0) {
+      sections.push({
+        id: "section_new_episodes",
+        slug: "new-episodes",
+        title: "Nouveaux épisodes",
+        subtitle: "Les toutes dernières sorties sur la plateforme",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 78,
+        reason: "Nouveauté",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&sort=recent",
+          view: "episodes",
+          sort: "recent",
+          label: "Nouveaux épisodes",
+        },
+        items: recentEpsDb.slice(0, 10).map((ep, idx) => ({
+          id: `item_newep_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Récemment publié",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "new-episodes" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 4. Populaires en ce moment
+    if (allPodcastsDb.length > 0) {
+      const popularPods = [...allPodcastsDb].slice(0, 10);
+      sections.push({
+        id: "section_popular_now",
+        slug: "popular-now",
+        title: "Populaires en ce moment",
+        subtitle: "Les podcasts qui font l'actualité et captivent les auditeurs",
+        type: "PODCAST_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 75,
+        reason: "Populaire",
+        discoveryContext: {
+          targetUrl: "/explore?view=podcasts&sort=popular",
+          view: "podcasts",
+          sort: "popular",
+          label: "Populaires en ce moment",
+        },
+        items: popularPods.map((pod, idx) => ({
+          id: `item_pop_${pod.id}`,
+          targetType: "PODCAST",
+          position: idx,
+          reason: "Populaire",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "popular-now" },
+          podcast: pod,
+        })),
+      });
+    }
+
+    // 5. Pour commencer une émission
+    const starterEpisodes = [...diversifiedEpisodes].reverse().slice(0, 8);
+    if (starterEpisodes.length > 0) {
+      sections.push({
+        id: "section_start_podcast",
+        slug: "start-podcast",
+        title: "Pour commencer une émission",
+        subtitle: "Premiers épisodes recommandés pour entrer dans une série",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 72,
+        reason: "Pour démarrer",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&sort=oldest",
+          view: "episodes",
+          sort: "oldest",
+          label: "Pour commencer",
+        },
+        items: starterEpisodes.map((ep, idx) => ({
+          id: `item_start_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Introduction idéale",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "start-podcast" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 6. À écouter en moins de 20 minutes
+    const shortList = shortEpsDb.length > 0 ? shortEpsDb : diversifiedEpisodes.filter((e) => (e.durationSeconds || 0) <= 1200);
+    if (shortList.length > 0) {
+      sections.push({
+        id: "section_short_episodes",
+        slug: "short-episodes",
+        title: "À écouter en moins de 20 minutes",
+        subtitle: "Formats courts pour vos trajets et pauses rapides",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 70,
+        reason: "Format court",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&duration=SHORT",
+          view: "episodes",
+          duration: "SHORT",
+          label: "Moins de 20 minutes",
+        },
+        items: shortList.slice(0, 8).map((ep, idx) => ({
+          id: `item_short_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: `${Math.round((ep.durationSeconds || 600) / 60)} min`,
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "short-episodes" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 7. Les formats longs à explorer
+    const longList = longEpsDb.length > 0 ? longEpsDb : diversifiedEpisodes.filter((e) => (e.durationSeconds || 0) >= 2400);
+    if (longList.length > 0) {
+      sections.push({
+        id: "section_long_episodes",
+        slug: "long-episodes",
+        title: "Les formats longs à explorer",
+        subtitle: "Entretiens approfondis, dossiers thématiques et récits complets",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 68,
+        reason: "Format long",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&duration=LONG",
+          view: "episodes",
+          duration: "LONG",
+          label: "Formats longs (> 45 min)",
+        },
+        items: longList.slice(0, 8).map((ep, idx) => ({
+          id: `item_long_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: `${Math.round((ep.durationSeconds || 2700) / 60)} min`,
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "long-episodes" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 8. Des voix à découvrir
+    const voicesPods = allPodcastsDb.slice(5, 15);
+    if (voicesPods.length > 0) {
+      sections.push({
+        id: "section_voices_discover",
+        slug: "voices-discover",
+        title: "Des voix à découvrir",
+        subtitle: "Nouveaux talents, créatrices et créateurs indépendants",
+        type: "PODCAST_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 65,
+        reason: "Nouvelles voix",
+        discoveryContext: {
+          targetUrl: "/explore?view=podcasts&sort=recent",
+          view: "podcasts",
+          sort: "recent",
+          label: "Des voix à découvrir",
+        },
+        items: voicesPods.map((pod, idx) => ({
+          id: `item_voice_${pod.id}`,
+          targetType: "PODCAST",
+          position: idx,
+          reason: "Voix singulière",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "voices-discover" },
+          podcast: pod,
+        })),
+      });
+    }
+
+    // 9. À redécouvrir
+    const rediscoverEps = [...diversifiedEpisodes].slice(8, 16);
+    if (rediscoverEps.length > 0) {
+      sections.push({
+        id: "section_rediscover",
+        slug: "rediscover",
+        title: "À redécouvrir",
+        subtitle: "Les incontournables et pépites intemporelles de nos archives",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 62,
+        reason: "Archives clés",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&sort=oldest",
+          view: "episodes",
+          sort: "oldest",
+          label: "À redécouvrir",
+        },
+        items: rediscoverEps.map((ep, idx) => ({
+          id: `item_redis_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Grand classique",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "rediscover" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 10. Les émissions récemment arrivées sur BKO
+    const recentPods = [...allPodcastsDb].slice(0, 8);
+    if (recentPods.length > 0) {
+      sections.push({
+        id: "section_new_podcasts",
+        slug: "new-podcasts",
+        title: "Les émissions récemment arrivées sur BKO",
+        subtitle: "Les tout derniers podcasts ajoutés au catalogue",
+        type: "PODCAST_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 60,
+        reason: "Arrivées récentes",
+        discoveryContext: {
+          targetUrl: "/explore?view=podcasts&sort=recent",
+          view: "podcasts",
+          sort: "recent",
+          label: "Nouvelles émissions",
+        },
+        items: recentPods.map((pod, idx) => ({
+          id: `item_newpod_${pod.id}`,
+          targetType: "PODCAST",
+          position: idx,
+          reason: "Nouveau au catalogue",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "new-podcasts" },
+          podcast: pod,
+        })),
+      });
+    }
+
+    // 11. Une sélection dans une langue disponible (Bambara ou autre langue locale)
+    const bamanankanEps = diversifiedEpisodes.filter((e) => e.podcast?.primaryLanguageCode === "bm" || e.language?.code === "bm");
+    const langEps = bamanankanEps.length > 0 ? bamanankanEps : diversifiedEpisodes.slice(2, 8);
+    const targetLangCode = bamanankanEps.length > 0 ? "bm" : "fr";
+    const targetLangName = targetLangCode === "bm" ? "Bambara (Bamanankan)" : "Français";
+    if (langEps.length > 0) {
+      sections.push({
+        id: "section_lang_selection",
+        slug: "lang-selection",
+        title: `Sélection en ${targetLangName}`,
+        subtitle: "Écoutez des histoires et débats dans les langues du Mali",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 58,
+        reason: targetLangName,
+        discoveryContext: {
+          targetUrl: `/explore?view=episodes&lang=${targetLangCode}`,
+          view: "episodes",
+          language: targetLangCode,
+          label: `En ${targetLangName}`,
+        },
+        items: langEps.slice(0, 8).map((ep, idx) => ({
+          id: `item_lang_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: targetLangName,
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "lang-selection" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 12. Une sélection autour d'un sujet présent dans le catalogue
+    const topicEps = diversifiedEpisodes.slice(4, 12);
+    if (topicEps.length > 0) {
+      sections.push({
+        id: "section_topic_selection",
+        slug: "topic-selection",
+        title: "Focus thématique : Société & Culture",
+        subtitle: "Épisodes explorant les transformations sociales et culturelles",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 55,
+        reason: "Thématique phare",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&category=societe",
+          view: "episodes",
+          category: "societe",
+          label: "Société & Culture",
+        },
+        items: topicEps.map((ep, idx) => ({
+          id: `item_topic_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Société & Culture",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "topic-selection" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 13. Conversations et interviews à découvrir
+    const interviewEps = diversifiedEpisodes.slice(1, 9);
+    if (interviewEps.length > 0) {
+      sections.push({
+        id: "section_conversations",
+        slug: "conversations-interviews",
+        title: "Conversations et interviews à découvrir",
+        subtitle: "Dialogues, face-à-face et récits d'expériences",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 52,
+        reason: "Interview & Débat",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&sort=popular",
+          view: "episodes",
+          sort: "popular",
+          label: "Conversations et interviews",
+        },
+        items: interviewEps.map((ep, idx) => ({
+          id: `item_conv_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Entretien marquant",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "conversations-interviews" },
+          episode: ep,
+        })),
+      });
+    }
+
+    // 14. Les émissions qui publient régulièrement
+    const regularPods = allPodcastsDb.slice(3, 11);
+    if (regularPods.length > 0) {
+      sections.push({
+        id: "section_active_podcasts",
+        slug: "active-podcasts",
+        title: "Les émissions qui publient régulièrement",
+        subtitle: "Rendez-vous fréquents et programmes suivis avec constance",
+        type: "PODCAST_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 50,
+        reason: "Publication régulière",
+        discoveryContext: {
+          targetUrl: "/explore?view=podcasts&sort=recent",
+          view: "podcasts",
+          sort: "recent",
+          label: "Émissions régulières",
+        },
+        items: regularPods.map((pod, idx) => ({
+          id: `item_act_${pod.id}`,
+          targetType: "PODCAST",
+          position: idx,
+          reason: "Cadence régulière",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "active-podcasts" },
+          podcast: pod,
+        })),
+      });
+    }
+
+    // 15. La sélection BKO
+    const bkoSelection = diversifiedEpisodes.slice(0, 8);
+    if (bkoSelection.length > 0) {
+      sections.push({
+        id: "section_bko_editorial",
+        slug: "editorial-selection",
+        title: "La sélection BKO",
+        subtitle: "Nos coups de cœur choisis spécialement par la rédaction",
+        type: "EPISODE_ROW",
+        sourceMode: "AUTOMATIC",
+        position: sectionPos++,
+        isFixedPlacement: false,
+        priority: 48,
+        reason: "Coup de cœur BKO",
+        discoveryContext: {
+          targetUrl: "/explore?view=episodes&sort=popular",
+          view: "episodes",
+          sort: "popular",
+          label: "La sélection BKO",
+        },
+        items: bkoSelection.map((ep, idx) => ({
+          id: `item_bko_${ep.id}`,
+          targetType: "EPISODE",
+          position: idx,
+          reason: "Coup de cœur",
+          attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "editorial-selection" },
+          episode: ep,
         })),
       });
     }

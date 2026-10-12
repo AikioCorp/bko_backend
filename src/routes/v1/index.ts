@@ -123,6 +123,7 @@ router.get("/health/worker", (req, res) => {
 
 // --- AUTHENTIFICATION ---
 router.post("/auth/register", authLimiter, accountLimiter(5), AuthController.register);
+router.post("/auth/resend-otp", authLimiter, accountLimiter(5), AuthController.resendOtp);
 router.post("/auth/verify-otp", authLimiter, accountLimiter(5), AuthController.verifyOtp);
 router.post("/auth/forgot-password", authLimiter, accountLimiter(3), AuthController.forgotPassword);
 router.post("/auth/reset-password", authLimiter, AuthController.resetPassword);
