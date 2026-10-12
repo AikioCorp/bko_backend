@@ -139,7 +139,7 @@ export class PodcastService {
     };
   }
 
-  static async getPodcastBySlug(slug: string) {
+  static async getPodcastBySlug(slug: string, episodeLimit?: number, episodeOffset = 0) {
     const podcast = await prisma.podcast.findUnique({
       where: { slug },
       include: {
@@ -173,7 +173,8 @@ export class PodcastService {
         },
         episodes: {
           where: { status: "PUBLISHED" },
-          orderBy: { publishedAt: "desc" },
+          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+          ...(episodeLimit ? { take: episodeLimit + 1, skip: episodeOffset } : {}),
           include: {
             mediaSources: true,
             people: {
@@ -184,7 +185,7 @@ export class PodcastService {
           },
         },
         _count: {
-          select: { episodes: true, followers: true },
+          select: { episodes: { where: { status: "PUBLISHED" } }, followers: true },
         },
       },
     });
@@ -194,7 +195,8 @@ export class PodcastService {
 
     return {
       ...podcast,
-      episodes: podcast.episodes.map(formatEpisodeWithMediaFlags),
+      episodes: (episodeLimit ? podcast.episodes.slice(0, episodeLimit) : podcast.episodes).map(formatEpisodeWithMediaFlags),
+      ...(episodeLimit ? { episodesPage: { hasMore: podcast.episodes.length > episodeLimit, nextOffset: episodeOffset + Math.min(episodeLimit, podcast.episodes.length) } } : {}),
     };
   }
 }

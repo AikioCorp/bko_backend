@@ -38,7 +38,12 @@ export class PodcastController {
   static async getPodcastBySlug(req: Request, res: Response) {
     try {
       const { slug } = req.params;
-      const podcast = await PodcastService.getPodcastBySlug(slug);
+      const episodeLimit = req.query.episodeLimit === undefined ? undefined : Number(req.query.episodeLimit);
+      const episodeOffset = req.query.episodeOffset === undefined ? 0 : Number(req.query.episodeOffset);
+      if ((episodeLimit !== undefined && (!Number.isInteger(episodeLimit) || episodeLimit < 1 || episodeLimit > 100)) || !Number.isInteger(episodeOffset) || episodeOffset < 0) {
+        return sendError(res, "Pagination des épisodes invalide", "BAD_REQUEST", 400);
+      }
+      const podcast = await PodcastService.getPodcastBySlug(slug, episodeLimit, episodeOffset);
 
       if (!podcast) {
         return sendError(res, "Podcast introuvable", "PODCAST_NOT_FOUND", 404);
