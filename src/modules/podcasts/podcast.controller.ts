@@ -43,7 +43,14 @@ export class PodcastController {
       if ((episodeLimit !== undefined && (!Number.isInteger(episodeLimit) || episodeLimit < 1 || episodeLimit > 100)) || !Number.isInteger(episodeOffset) || episodeOffset < 0) {
         return sendError(res, "Pagination des épisodes invalide", "BAD_REQUEST", 400);
       }
-      const podcast = await PodcastService.getPodcastBySlug(slug, episodeLimit, episodeOffset);
+      const episodeSort = req.query.episodeSort ?? "recent";
+      const episodeType = req.query.episodeType;
+      if ((episodeSort !== "recent" && episodeSort !== "oldest") ||
+          (episodeType !== undefined && episodeType !== "AUDIO" && episodeType !== "VIDEO")) {
+        return sendError(res, "Filtre des épisodes invalide", "BAD_REQUEST", 400);
+      }
+      const podcast = await PodcastService.getPodcastBySlug(slug, episodeLimit, episodeOffset,
+        episodeSort as "recent" | "oldest", episodeType as "AUDIO" | "VIDEO" | undefined);
 
       if (!podcast) {
         return sendError(res, "Podcast introuvable", "PODCAST_NOT_FOUND", 404);

@@ -83,6 +83,52 @@ export class RecommendationController {
   }
 
   /**
+   * GET /api/v1/home/sections/:sectionId
+   * Récupère les détails et la suite paginée d'une section d'accueil
+   */
+  static async getSectionDetails(req: AuthenticatedRequest, res: Response) {
+    try {
+      const sectionId = req.params.sectionId;
+      if (!sectionId) {
+        return sendError(res, "Identifiant de section requis", "BAD_REQUEST", 400);
+      }
+
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const country = (req.query.country as string) || "all";
+      const category = (req.query.category as string) || "all";
+      const batchId = (req.query.batchId as string) || undefined;
+      const verifiedUserId = req.user?.id;
+      const anonymousId = (req.headers["x-anonymous-id"] as string) || (req.query.anon as string) || undefined;
+
+      const data = await PersonalizationEngineService.getSectionDetails(sectionId, {
+        userId: verifiedUserId,
+        anonymousId,
+        countryId: country,
+        category,
+        offset,
+        limit,
+        batchId,
+      });
+
+      if (!data) {
+        return sendError(res, "Section introuvable", "NOT_FOUND", 404);
+      }
+
+      if (verifiedUserId) {
+        res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
+      } else {
+        res.setHeader("Cache-Control", "public, max-age=60, s-maxage=120, stale-while-revalidate=300");
+      }
+
+      return sendSuccess(res, data);
+    } catch (error: any) {
+      console.error("[RecommendationController.getSectionDetails] Error:", error);
+      return sendError(res, error.message || "Erreur lors de la récupération de la section.");
+    }
+  }
+
+  /**
    * POST /api/v1/recommendations/feedback
    * Retours explicites : pas intéressé, masquer l'émission, exclure d'une écoute
    */

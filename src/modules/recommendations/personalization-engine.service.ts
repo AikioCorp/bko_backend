@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "../../config/prisma.js";
 import {
   RecommendationBatchResponse,
+  RecommendationItemDto,
   RecommendationSectionDto,
   UserInterestProfile,
 } from "./recommendation.types.js";
@@ -1035,6 +1036,1051 @@ export class PersonalizationEngineService {
       nextCursor: feedResult.nextCursor,
       hasMore: feedResult.hasMore,
     };
+  }
+
+  /**
+   * Récupère le détail paginé d'une section spécifique d'accueil (prolongement de rayon dédié)
+   */
+  static async getSectionDetails(
+    sectionIdOrSlug: string,
+    options: {
+      userId?: string;
+      anonymousId?: string;
+      countryId?: string;
+      category?: string;
+      offset?: number;
+      limit?: number;
+      batchId?: string;
+    } = {}
+  ): Promise<{
+    section: {
+      id: string;
+      slug: string;
+      title: string;
+      subtitle?: string | null;
+      type: string;
+      sourceMode: string;
+      discoveryContext?: any;
+    };
+    items: RecommendationItemDto[];
+    pagination: {
+      offset: number;
+      limit: number;
+      total: number;
+      hasMore: boolean;
+    };
+  } | null> {
+    const rawOffset = options.offset ?? 0;
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+    const rawLimit = options.limit ?? 20;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 20;
+    const category = options.category && options.category !== "all" ? options.category : undefined;
+    const countryId = options.countryId && options.countryId !== "all" ? options.countryId : undefined;
+    const batchId = options.batchId || `sec_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+    const variant = "control";
+
+    const key = sectionIdOrSlug.toLowerCase().trim();
+
+    const episodeInclude = {
+      podcast: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          cover: true,
+          primaryLanguageCode: true,
+          countryId: true,
+          organization: { select: { name: true, slug: true } },
+          categories: { include: { category: true } },
+          _count: { select: { episodes: true, followers: true } },
+        },
+      },
+      mediaSources: true,
+      language: true,
+    };
+
+    const podcastInclude = {
+      primaryLanguage: true,
+      categories: { include: { category: true } },
+      organization: { select: { name: true, slug: true } },
+      _count: { select: { episodes: true, followers: true } },
+    };
+
+    const categoryEpisodeFilter = category
+      ? {
+          podcast: {
+            categories: {
+              some: {
+                category: {
+                  OR: [
+                    { id: category },
+                    { slug: category },
+                    { name: { equals: category, mode: "insensitive" as const } },
+                  ],
+                },
+              },
+            },
+          },
+        }
+      : {};
+
+    const categoryPodcastFilter = category
+      ? {
+          categories: {
+            some: {
+              category: {
+                OR: [
+                  { id: category },
+                  { slug: category },
+                  { name: { equals: category, mode: "insensitive" as const } },
+                ],
+              },
+            },
+          },
+        }
+      : {};
+
+    // 1. Continuer l'écoute
+    if (key === "continue-listening" || key === "section_continue_listening") {
+      if (!options.userId) {
+        return {
+          section: {
+            id: "section_continue_listening",
+            slug: "continue-listening",
+            title: "Continuer l'écoute",
+            subtitle: "Reprenez là où vous vous étiez arrêté",
+            type: "EPISODE_ROW",
+            sourceMode: "AUTOMATIC",
+          },
+          items: [],
+          pagination: { offset, limit, total: 0, hasMore: false },
+        };
+      }
+
+      const where = {
+        userId: options.userId,
+        completed: false,
+        positionSeconds: { gt: 10 },
+        episode: {
+          status: "PUBLISHED" as const,
+          podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+          ...categoryEpisodeFilter,
+        },
+      };
+
+      const [total, history] = await Promise.all([
+        prisma.playbackHistory.count({ where }),
+        prisma.playbackHistory.findMany({
+          where,
+          orderBy: { lastPlayedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: {
+            episode: { include: episodeInclude },
+          },
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = history.map((h, idx) => ({
+        id: `item_resume_${h.episodeId}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "En cours",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "continue-listening" },
+        episode: {
+          ...h.episode,
+          positionSeconds: h.positionSeconds,
+          completed: h.completed,
+        },
+      }));
+
+      return {
+        section: {
+          id: "section_continue_listening",
+          slug: "continue-listening",
+          title: "Continuer l'écoute",
+          subtitle: "Reprenez là où vous vous étiez arrêté",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/library", view: "episodes", label: "Reprendre l'écoute" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 2. Du nouveau dans vos émissions (suivis)
+    if (key === "new-from-follows" || key === "section_new_from_follows") {
+      if (!options.userId) {
+        return {
+          section: {
+            id: "section_new_from_follows",
+            slug: "new-from-follows",
+            title: "Du nouveau dans vos émissions",
+            subtitle: "Les derniers épisodes des podcasts que vous suivez",
+            type: "EPISODE_ROW",
+            sourceMode: "AUTOMATIC",
+          },
+          items: [],
+          pagination: { offset, limit, total: 0, hasMore: false },
+        };
+      }
+
+      const follows = await prisma.podcastFollow.findMany({
+        where: { userId: options.userId },
+        select: { podcastId: true },
+      });
+      const followedPodIds = follows.map((f) => f.podcastId);
+
+      if (followedPodIds.length === 0) {
+        return {
+          section: {
+            id: "section_new_from_follows",
+            slug: "new-from-follows",
+            title: "Du nouveau dans vos émissions",
+            subtitle: "Les derniers épisodes des podcasts que vous suivez",
+            type: "EPISODE_ROW",
+            sourceMode: "AUTOMATIC",
+          },
+          items: [],
+          pagination: { offset, limit, total: 0, hasMore: false },
+        };
+      }
+
+      const where = {
+        podcastId: { in: followedPodIds },
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_follow_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: `Nouvel épisode de ${ep.podcast?.name}`,
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "new-from-follows" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_new_from_follows",
+          slug: "new-from-follows",
+          title: "Du nouveau dans vos émissions",
+          subtitle: "Les derniers épisodes des podcasts que vous suivez",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/library", view: "episodes", label: "Mes abonnements" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 3. À écouter en moins de 20 minutes (short-episodes)
+    if (key === "short-episodes" || key === "section_short_episodes") {
+      const where = {
+        status: "PUBLISHED" as const,
+        durationSeconds: { lte: 1200, gt: 0 },
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_short_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: `${Math.round((ep.durationSeconds || 600) / 60)} min`,
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "short-episodes" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_short_episodes",
+          slug: "short-episodes",
+          title: "À écouter en moins de 20 minutes",
+          subtitle: "Formats courts pour vos trajets et pauses rapides",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&duration=SHORT", view: "episodes", duration: "SHORT", label: "Moins de 20 minutes" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 4. Les formats longs à explorer (long-episodes)
+    if (key === "long-episodes" || key === "section_long_episodes") {
+      const where = {
+        status: "PUBLISHED" as const,
+        durationSeconds: { gte: 2400 },
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_long_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: `${Math.round((ep.durationSeconds || 2700) / 60)} min`,
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "long-episodes" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_long_episodes",
+          slug: "long-episodes",
+          title: "Les formats longs à explorer",
+          subtitle: "Entretiens approfondis, dossiers thématiques et récits complets",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&duration=LONG", view: "episodes", duration: "LONG", label: "Formats longs (> 40 min)" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 5. Nouveaux épisodes (new-episodes)
+    if (key === "new-episodes" || key === "section_new_episodes") {
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_newep_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Récemment publié",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "new-episodes" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_new_episodes",
+          slug: "new-episodes",
+          title: "Nouveaux épisodes",
+          subtitle: "Les toutes dernières sorties sur la plateforme",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&sort=recent", view: "episodes", sort: "recent", label: "Nouveaux épisodes" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 6. Populaires en ce moment (popular-now)
+    if (key === "popular-now" || key === "section_popular_now") {
+      const where = {
+        status: "PUBLISHED" as const,
+        episodes: { some: { status: "PUBLISHED" as const } },
+        ...(countryId ? { countryId } : {}),
+        ...categoryPodcastFilter,
+      };
+
+      const [total, podcasts] = await Promise.all([
+        prisma.podcast.count({ where }),
+        prisma.podcast.findMany({
+          where,
+          orderBy: [{ qualityScore: "desc" }, { updatedAt: "desc" }],
+          skip: offset,
+          take: limit,
+          include: podcastInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = podcasts.map((pod, idx) => ({
+        id: `item_pop_${pod.id}`,
+        targetType: "PODCAST",
+        position: offset + idx,
+        reason: "Populaire",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "popular-now" },
+        podcast: pod,
+      }));
+
+      return {
+        section: {
+          id: "section_popular_now",
+          slug: "popular-now",
+          title: "Populaires en ce moment",
+          subtitle: "Les podcasts qui font l'actualité et captivent les auditeurs",
+          type: "PODCAST_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=podcasts&sort=popular", view: "podcasts", sort: "popular", label: "Populaires en ce moment" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 7. Émissions à découvrir (discover-podcasts)
+    if (key === "discover-podcasts" || key === "section_discover_podcasts") {
+      const where = {
+        status: "PUBLISHED" as const,
+        episodes: { some: { status: "PUBLISHED" as const } },
+        ...(countryId ? { countryId } : {}),
+        ...categoryPodcastFilter,
+      };
+
+      const [total, podcasts] = await Promise.all([
+        prisma.podcast.count({ where }),
+        prisma.podcast.findMany({
+          where,
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+          skip: offset,
+          take: limit,
+          include: podcastInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = podcasts.map((pod, idx) => ({
+        id: `item_discpod_${pod.id}`,
+        targetType: "PODCAST",
+        position: offset + idx,
+        reason: "Émission recommandée",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "discover-podcasts" },
+        podcast: pod,
+      }));
+
+      return {
+        section: {
+          id: "section_discover_podcasts",
+          slug: "discover-podcasts",
+          title: "Émissions à découvrir",
+          subtitle: "Nouvelles voix et perspectives à explorer",
+          type: "PODCAST_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=podcasts&sort=popular", view: "podcasts", sort: "popular", label: "Émissions à découvrir" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 8. Des voix à découvrir (voices-discover)
+    if (key === "voices-discover" || key === "section_voices_discover") {
+      const where = {
+        status: "PUBLISHED" as const,
+        episodes: { some: { status: "PUBLISHED" as const } },
+        ...(countryId ? { countryId } : {}),
+        ...categoryPodcastFilter,
+      };
+
+      const [total, podcasts] = await Promise.all([
+        prisma.podcast.count({ where }),
+        prisma.podcast.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: podcastInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = podcasts.map((pod, idx) => ({
+        id: `item_voice_${pod.id}`,
+        targetType: "PODCAST",
+        position: offset + idx,
+        reason: "Voix singulière",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "voices-discover" },
+        podcast: pod,
+      }));
+
+      return {
+        section: {
+          id: "section_voices_discover",
+          slug: "voices-discover",
+          title: "Des voix à découvrir",
+          subtitle: "Nouveaux talents, créatrices et créateurs indépendants",
+          type: "PODCAST_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=podcasts&sort=recent", view: "podcasts", sort: "recent", label: "Des voix à découvrir" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 9. Les émissions récemment arrivées (new-podcasts)
+    if (key === "new-podcasts" || key === "section_new_podcasts") {
+      const where = {
+        status: "PUBLISHED" as const,
+        episodes: { some: { status: "PUBLISHED" as const } },
+        ...(countryId ? { countryId } : {}),
+        ...categoryPodcastFilter,
+      };
+
+      const [total, podcasts] = await Promise.all([
+        prisma.podcast.count({ where }),
+        prisma.podcast.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: podcastInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = podcasts.map((pod, idx) => ({
+        id: `item_newpod_${pod.id}`,
+        targetType: "PODCAST",
+        position: offset + idx,
+        reason: "Nouveau au catalogue",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "new-podcasts" },
+        podcast: pod,
+      }));
+
+      return {
+        section: {
+          id: "section_new_podcasts",
+          slug: "new-podcasts",
+          title: "Les émissions récemment arrivées sur BKO",
+          subtitle: "Les tout derniers podcasts ajoutés au catalogue",
+          type: "PODCAST_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=podcasts&sort=recent", view: "podcasts", sort: "recent", label: "Nouvelles émissions" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 10. Les émissions qui publient régulièrement (active-podcasts)
+    if (key === "active-podcasts" || key === "section_active_podcasts") {
+      const where = {
+        status: "PUBLISHED" as const,
+        episodes: { some: { status: "PUBLISHED" as const } },
+        ...(countryId ? { countryId } : {}),
+        ...categoryPodcastFilter,
+      };
+
+      const [total, podcasts] = await Promise.all([
+        prisma.podcast.count({ where }),
+        prisma.podcast.findMany({
+          where,
+          orderBy: { updatedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: podcastInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = podcasts.map((pod, idx) => ({
+        id: `item_act_${pod.id}`,
+        targetType: "PODCAST",
+        position: offset + idx,
+        reason: "Cadence régulière",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "active-podcasts" },
+        podcast: pod,
+      }));
+
+      return {
+        section: {
+          id: "section_active_podcasts",
+          slug: "active-podcasts",
+          title: "Les émissions qui publient régulièrement",
+          subtitle: "Rendez-vous fréquents et programmes suivis avec constance",
+          type: "PODCAST_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=podcasts&sort=recent", view: "podcasts", sort: "recent", label: "Émissions régulières" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 11. Pour commencer une émission (start-podcast)
+    if (key === "start-podcast" || key === "section_start_podcast") {
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "asc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_start_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Introduction idéale",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "start-podcast" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_start_podcast",
+          slug: "start-podcast",
+          title: "Pour commencer une émission",
+          subtitle: "Premiers épisodes recommandés pour entrer dans une série",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&sort=oldest", view: "episodes", sort: "oldest", label: "Pour commencer" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 12. À redécouvrir (rediscover)
+    if (key === "rediscover" || key === "section_rediscover") {
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "asc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_redis_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Grand classique",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "rediscover" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_rediscover",
+          slug: "rediscover",
+          title: "À redécouvrir",
+          subtitle: "Les incontournables et pépites intemporelles de nos archives",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&sort=oldest", view: "episodes", sort: "oldest", label: "À redécouvrir" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 13. Sélection en langue locale (lang-selection)
+    if (key === "lang-selection" || key === "section_lang_selection") {
+      const bmWhere = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        OR: [
+          { podcast: { primaryLanguageCode: "bm" } },
+          { language: { code: "bm" } },
+        ],
+        ...categoryEpisodeFilter,
+      };
+
+      let [total, episodes] = await Promise.all([
+        prisma.episode.count({ where: bmWhere }),
+        prisma.episode.findMany({
+          where: bmWhere,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      let langName = "Bambara (Bamanankan)";
+      if (total === 0) {
+        langName = "Français";
+        const fallbackWhere = {
+          status: "PUBLISHED" as const,
+          podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+          ...categoryEpisodeFilter,
+        };
+        [total, episodes] = await Promise.all([
+          prisma.episode.count({ where: fallbackWhere }),
+          prisma.episode.findMany({
+            where: fallbackWhere,
+            orderBy: { publishedAt: "desc" },
+            skip: offset,
+            take: limit,
+            include: episodeInclude,
+          }),
+        ]);
+      }
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_lang_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: langName,
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "lang-selection" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_lang_selection",
+          slug: "lang-selection",
+          title: `Sélection en ${langName}`,
+          subtitle: "Écoutez des histoires et débats dans les langues du Mali",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&lang=bm", view: "episodes", language: "bm", label: `En ${langName}` },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 14. Focus thématique : Société & Culture (topic-selection)
+    if (key === "topic-selection" || key === "section_topic_selection") {
+      const topicWhere = {
+        status: "PUBLISHED" as const,
+        podcast: {
+          status: "PUBLISHED" as const,
+          ...(countryId ? { countryId } : {}),
+          categories: {
+            some: {
+              category: {
+                OR: [
+                  { slug: { in: ["societe", "culture", "societe-culture"] } },
+                  { name: { contains: "Société", mode: "insensitive" as const } },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      let [total, episodes] = await Promise.all([
+        prisma.episode.count({ where: topicWhere }),
+        prisma.episode.findMany({
+          where: topicWhere,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      if (total === 0) {
+        const fallbackWhere = {
+          status: "PUBLISHED" as const,
+          podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+          ...categoryEpisodeFilter,
+        };
+        [total, episodes] = await Promise.all([
+          prisma.episode.count({ where: fallbackWhere }),
+          prisma.episode.findMany({
+            where: fallbackWhere,
+            orderBy: { publishedAt: "desc" },
+            skip: offset,
+            take: limit,
+            include: episodeInclude,
+          }),
+        ]);
+      }
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_topic_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Société & Culture",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "topic-selection" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_topic_selection",
+          slug: "topic-selection",
+          title: "Focus thématique : Société & Culture",
+          subtitle: "Épisodes explorant les transformations sociales et culturelles",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&category=societe", view: "episodes", category: "societe", label: "Société & Culture" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 15. Conversations et interviews (conversations-interviews)
+    if (key === "conversations-interviews" || key === "section_conversations") {
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_conv_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Entretien marquant",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "conversations-interviews" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_conversations",
+          slug: "conversations-interviews",
+          title: "Conversations et interviews à découvrir",
+          subtitle: "Dialogues, face-à-face et récits d'expériences",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&sort=popular", view: "episodes", sort: "popular", label: "Conversations et interviews" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 16. La sélection BKO (editorial-selection)
+    if (key === "editorial-selection" || key === "section_bko_editorial") {
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_bko_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: "Coup de cœur",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "editorial-selection" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_bko_editorial",
+          slug: "editorial-selection",
+          title: "La sélection BKO",
+          subtitle: "Nos coups de cœur choisis spécialement par la rédaction",
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: { targetUrl: "/explore?view=episodes&sort=popular", view: "episodes", sort: "popular", label: "La sélection BKO" },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 17. Pour vous / Recommandations (for-you)
+    if (key === "for-you" || key === "section_featured_episodes") {
+      let profile: UserInterestProfile | null = null;
+      if (options.userId) {
+        try {
+          profile = await UserProfileService.getOrBuildProfile(options.userId);
+        } catch (_) {}
+      }
+      const isPersonalized = profile?.personalizationActive ?? false;
+
+      const where = {
+        status: "PUBLISHED" as const,
+        podcast: { status: "PUBLISHED" as const, ...(countryId ? { countryId } : {}) },
+        ...categoryEpisodeFilter,
+      };
+
+      const [total, episodes] = await Promise.all([
+        prisma.episode.count({ where }),
+        prisma.episode.findMany({
+          where,
+          orderBy: { publishedAt: "desc" },
+          skip: offset,
+          take: limit,
+          include: episodeInclude,
+        }),
+      ]);
+
+      const title = category
+        ? `Sélection : ${category}`
+        : isPersonalized
+        ? "Recommandé pour vous"
+        : "Épisodes à la une";
+
+      const subtitle = category
+        ? "Contenus filtrés par thématique"
+        : isPersonalized
+        ? "Selon vos centres d'intérêt et vos dernières écoutes"
+        : "Les épisodes les plus captivants du moment";
+
+      const items: RecommendationItemDto[] = episodes.map((ep, idx) => ({
+        id: `item_foryou_${ep.id}`,
+        targetType: "EPISODE",
+        position: offset + idx,
+        reason: isPersonalized ? "Pour vous" : "À la une",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: "for-you" },
+        episode: ep,
+      }));
+
+      return {
+        section: {
+          id: "section_featured_episodes",
+          slug: "for-you",
+          title,
+          subtitle,
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          discoveryContext: {
+            targetUrl: category ? `/explore?view=episodes&category=${category}` : "/explore?view=episodes&sort=popular",
+            view: "episodes",
+            category,
+            label: title,
+          },
+        },
+        items,
+        pagination: { offset, limit, total, hasMore: offset + items.length < total },
+      };
+    }
+
+    // 18. Sections éditoriales configurées en base (Prisma EditorialSection)
+    const editorialSec = await prisma.editorialSection.findFirst({
+      where: {
+        OR: [{ id: sectionIdOrSlug }, { slug: sectionIdOrSlug }],
+        isActive: true,
+      },
+      include: {
+        items: {
+          orderBy: { position: "asc" },
+          include: {
+            podcast: { include: podcastInclude },
+            episode: { include: episodeInclude },
+            collection: true,
+          },
+        },
+      },
+    });
+
+    if (editorialSec) {
+      const validItems = editorialSec.items.filter((item) => {
+        if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
+        if (item.episode && item.episode.status !== "PUBLISHED") return false;
+        return true;
+      });
+
+      const paginatedItems = validItems.slice(offset, offset + limit);
+      const items: RecommendationItemDto[] = paginatedItems.map((item, idx) => ({
+        id: `item_ed_${item.id}`,
+        targetType: (item.podcast ? "PODCAST" : "EPISODE") as "PODCAST" | "EPISODE",
+        position: offset + idx,
+        reason: "Sélection éditoriale",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: editorialSec.slug },
+        episode: item.episode || undefined,
+        podcast: item.podcast || undefined,
+      }));
+
+      return {
+        section: {
+          id: editorialSec.id,
+          slug: editorialSec.slug,
+          title: editorialSec.title,
+          subtitle: editorialSec.subtitle,
+          type: editorialSec.type,
+          sourceMode: editorialSec.sourceMode,
+          discoveryContext: {
+            targetUrl: `/explore?view=${editorialSec.type === "PODCAST_ROW" ? "podcasts" : "episodes"}`,
+            view: editorialSec.type === "PODCAST_ROW" ? "podcasts" : "episodes",
+            label: editorialSec.title,
+          },
+        },
+        items,
+        pagination: {
+          offset,
+          limit,
+          total: validItems.length,
+          hasMore: offset + items.length < validItems.length,
+        },
+      };
+    }
+
+    return null;
   }
 
   /**

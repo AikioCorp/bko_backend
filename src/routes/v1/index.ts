@@ -401,6 +401,7 @@ router.get("/search/suggestions", SearchController.suggestions);
 router.get("/explore", DiscoveryController.getExplore);
 router.get("/home", optionalAuthenticateToken, RecommendationController.getHome);
 router.get("/home/feed", optionalAuthenticateToken, RecommendationController.getHomeFeed);
+router.get("/home/sections/:sectionId", optionalAuthenticateToken, RecommendationController.getSectionDetails);
 router.get("/trending", DiscoveryController.getTrending);
 
 // --- RECOMMANDATIONS & PERSONNALISATION ---
