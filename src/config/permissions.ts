@@ -32,13 +32,13 @@ export const SUPER_ADMIN_ROLE = "SUPER_ADMIN";
 // Rôles fournis avec la plateforme. `preset` n'est appliqué qu'à la première initialisation :
 // ensuite, la configuration faite dans la console fait foi.
 export const SYSTEM_ROLES: { name: string; description: string; preset: string[] }[] = [
-  { name: "USER", description: "Auditeur", preset: [] },
-  { name: "CREATOR", description: "Créateur de contenu", preset: [] },
-  { name: "SUPER_ADMIN", description: "Super administrateur (tous les droits)", preset: [] },
-  { name: "ADMIN", description: "Administrateur", preset: ALL_PERMISSIONS.filter((p) => p !== "roles.delete") },
+  { name: "USER", description: "Auditeur — Écoute, playlists personnelles et interactions", preset: [] },
+  { name: "CREATOR", description: "Créateur — Publication et gestion d'émissions dans le studio", preset: [] },
+  { name: "SUPER_ADMIN", description: "Super Administrateur — Contrôle total et sans restriction de la plateforme", preset: [] },
+  { name: "ADMIN", description: "Administrateur — Gestion des utilisateurs, modération et catalogue", preset: ALL_PERMISSIONS.filter((p) => p !== "roles.delete") },
   {
     name: "EDITOR",
-    description: "Éditeur",
+    description: "Éditeur — Validation, curation et programmation du catalogue",
     preset: ["dashboard.view", "catalog.view", "catalog.create", "catalog.edit", "reviews.view", "reviews.edit", "moderation.view", "moderation.edit", "claims.view", "claims.edit", "markets.view", "storage.view"],
   },
 ];

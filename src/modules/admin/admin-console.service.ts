@@ -298,18 +298,62 @@ export class AdminConsoleService {
       prisma.user.count({ where }),
     ]);
     return {
-      items: items.map(({ userRoles, ...u }) => ({ ...u, roles: userRoles.map((ur) => ur.role.name) })),
+      items: items.map(({ userRoles, creatorProfile, ...u }) => ({
+        ...u,
+        isEmailVerified: u.isVerified,
+        isCreatorVerified: Boolean(creatorProfile?.isVerified),
+        hasCreatorProfile: Boolean(creatorProfile),
+        creatorProfile,
+        roles: userRoles.map((ur) => ur.role.name),
+      })),
       total,
       page: params.page,
       limit: params.limit,
     };
   }
 
-  /** Marque un créateur comme "de confiance" : ses contenus ne passent plus par la validation préalable. */
+  /** Marque un créateur comme certifié : badge bleu et pas de validation préalable. */
   static async setCreatorVerification(actorId: string, userId: string, verified: boolean, ip?: string) {
-    const profile = await prisma.creatorProfile.findUnique({ where: { userId } });
-    if (!profile) throw new Error("CREATOR_PROFILE_NOT_FOUND");
-    await prisma.creatorProfile.update({ where: { userId }, data: { isVerified: verified } });
+    let profile = await prisma.creatorProfile.findUnique({ where: { userId } });
+    if (!profile) {
+      if (verified) {
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error("NOT_FOUND");
+        const slugBase = (user.fullName || "creator")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .replace(/[\s-]+/g, "-")
+          .replace(/[^\w-]+/g, "");
+        let slug = slugBase || "creator";
+        let count = 1;
+        while (await prisma.creatorProfile.findUnique({ where: { slug } })) {
+          count++;
+          slug = `${slugBase}-${count}`;
+        }
+        profile = await prisma.creatorProfile.create({
+          data: {
+            userId,
+            displayName: user.fullName || "Créateur",
+            slug,
+            isVerified: true,
+          },
+        });
+        const creatorRole = await prisma.role.findUnique({ where: { name: "CREATOR" } });
+        if (creatorRole) {
+          await prisma.userRole.upsert({
+            where: { userId_roleId: { userId, roleId: creatorRole.id } },
+            create: { userId, roleId: creatorRole.id },
+            update: {},
+          });
+        }
+      } else {
+        return { userId, isVerified: false };
+      }
+    } else {
+      await prisma.creatorProfile.update({ where: { userId }, data: { isVerified: verified } });
+    }
     await AuditService.logAction({
       actorId,
       action: verified ? "CREATOR_VERIFIED" : "CREATOR_UNVERIFIED",

@@ -181,4 +181,36 @@ export class AuthController {
       return sendError(res, error.message);
     }
   }
+
+  static async googleLogin(req: Request, res: Response) {
+    try {
+      const { idToken, deviceType, deviceName } = req.body;
+      if (!idToken) {
+        return sendError(res, "Jeton Google (idToken) requis", "VALIDATION_ERROR", 400);
+      }
+
+      const result = await AuthService.loginWithGoogle({
+        idToken,
+        deviceType: deviceType || "WEB",
+        deviceName: deviceName || "Navigateur Web",
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      console.error("[auth] Erreur Google Login:", error.message);
+      if (error.message === "ACCOUNT_SUSPENDED") {
+        return sendError(res, "Ce compte a été suspendu par l'administration", "ACCOUNT_SUSPENDED", 403);
+      }
+      return sendError(res, error.message || "Échec de l'authentification Google", "GOOGLE_AUTH_ERROR", 401);
+    }
+  }
 }

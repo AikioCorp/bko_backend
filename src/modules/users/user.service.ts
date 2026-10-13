@@ -58,13 +58,14 @@ export class UserService {
     };
   }
 
-  static async updateMe(userId: string, data: { fullName?: string; avatar?: string }) {
+  static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string }) {
     const updated = await prisma.user.update({
       where: { id: userId },
       data,
       select: {
         id: true,
         email: true,
+        phoneNumber: true,
         fullName: true,
         avatar: true,
       },

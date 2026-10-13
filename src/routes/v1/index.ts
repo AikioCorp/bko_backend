@@ -128,6 +128,7 @@ router.post("/auth/verify-otp", authLimiter, accountLimiter(5), AuthController.v
 router.post("/auth/forgot-password", authLimiter, accountLimiter(3), AuthController.forgotPassword);
 router.post("/auth/reset-password", authLimiter, AuthController.resetPassword);
 router.post("/auth/login", authLimiter, accountLimiter(10), AuthController.login);
+router.post("/auth/google", authLimiter, AuthController.googleLogin);
 router.post("/auth/refresh", refreshLimiter, AuthController.refreshToken);
 router.post("/auth/logout", authLimiter, AuthController.logout);
 router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevices);

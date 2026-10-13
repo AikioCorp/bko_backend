@@ -484,4 +484,143 @@ export class AuthService {
 
     return { message: "Déconnexion de tous les appareils réussie" };
   }
+
+  static async loginWithGoogle(params: {
+    idToken: string;
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const { OAuth2Client } = await import("google-auth-library");
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const client = new OAuth2Client(clientId);
+
+    const ticket = await client.verifyIdToken({
+      idToken: params.idToken,
+      audience: clientId,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      throw new Error("GOOGLE_AUTH_FAILED: Impossible de valider le compte Google");
+    }
+
+    const email = payload.email.trim().toLowerCase();
+    const fullName = payload.name || payload.email.split("@")[0];
+    const avatar = payload.picture || null;
+
+    let user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      include: {
+        userRoles: {
+          include: { role: true },
+        },
+      },
+    });
+
+    if (user && user.isSuspended) {
+      throw new Error("ACCOUNT_SUSPENDED");
+    }
+
+    if (!user) {
+      // Création automatique de l'utilisateur vérifié
+      const roleUser = await prisma.role.findUnique({ where: { name: "USER" } });
+      user = await prisma.user.create({
+        data: {
+          email,
+          fullName,
+          avatar,
+          isVerified: true, // Google vérifie déjà l'adresse email
+          ...(roleUser
+            ? {
+                userRoles: {
+                  create: {
+                    roleId: roleUser.id,
+                  },
+                },
+              }
+            : {}),
+        },
+        include: {
+          userRoles: {
+            include: { role: true },
+          },
+        },
+      });
+    } else if (!user.isVerified) {
+      // Si l'utilisateur existait mais n'était pas encore vérifié, Google certifie son email
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          isVerified: true,
+          avatar: user.avatar || avatar,
+        },
+        include: {
+          userRoles: {
+            include: { role: true },
+          },
+        },
+      });
+    }
+
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    // Access Token 15m
+    const accessToken = jwt.sign(
+      { id: user.id, email: user.email, roles },
+      JWT_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    // Refresh Token 7 jours
+    const rawRefreshToken = crypto.randomBytes(40).toString("hex");
+    const tokenHash = hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    let device = null;
+    if (params.deviceType) {
+      device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          deviceType: params.deviceType || "WEB",
+          deviceName: params.deviceName || "Navigateur Web",
+        },
+      });
+    }
+
+    await Promise.all([
+      prisma.session.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          expiresAt,
+        },
+      }),
+      prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        avatar: user.avatar,
+        roles,
+        isVerified: user.isVerified,
+      },
+      accessToken,
+      refreshToken: rawRefreshToken,
+    };
+  }
 }
