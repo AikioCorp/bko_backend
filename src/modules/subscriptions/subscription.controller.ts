@@ -87,4 +87,56 @@ export class SubscriptionController {
       return sendError(res, error.message);
     }
   }
+
+  // =========================================================================
+  // ADMIN CONTROLLER ENDPOINTS
+  // =========================================================================
+
+  static async adminListPlans(_req: Request, res: Response) {
+    try {
+      const plans = await SubscriptionService.adminListPlans();
+      return sendSuccess(res, plans);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors du chargement des formules admin");
+    }
+  }
+
+  static async adminCreatePlan(req: AuthenticatedRequest, res: Response) {
+    try {
+      const plan = await SubscriptionService.adminCreatePlan(req.body);
+      return sendSuccess(res, plan, null, 201);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la création de la formule");
+    }
+  }
+
+  static async adminUpdatePlan(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const plan = await SubscriptionService.adminUpdatePlan(id, req.body);
+      return sendSuccess(res, plan);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la mise à jour de la formule");
+    }
+  }
+
+  static async adminTogglePlan(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const plan = await SubscriptionService.adminTogglePlan(id);
+      return sendSuccess(res, plan);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors du changement de visibilité");
+    }
+  }
+
+  static async adminDeletePlan(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      await SubscriptionService.adminDeletePlan(id);
+      return sendSuccess(res, { deleted: true, id });
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la suppression de la formule");
+    }
+  }
 }

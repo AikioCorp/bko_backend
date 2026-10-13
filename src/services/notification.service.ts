@@ -2,6 +2,7 @@ import { PodcastMemberRole } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { MailService } from "./mail/mail.service.js";
 import { Emails } from "./mail/email-templates.js";
+import { PushNotificationService } from "./push-notification.service.js";
 
 export interface NotificationInput {
   type: string;
@@ -27,6 +28,14 @@ export class NotificationService {
       await prisma.notification.createMany({
         data: ids.map((userId) => ({ userId, type: n.type, title: n.title, body: n.body, link })),
       });
+
+      // Envoi Push Notification (FCM / APNs)
+      void PushNotificationService.sendToUsers(ids, {
+        title: n.title,
+        body: n.body || "",
+        route: link,
+      });
+
       if (opts.email) {
         const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { email: true } });
         await Promise.all(users.map((u) => MailService.enqueue(Emails.notification(u.email, { title: n.title, body: n.body, link }))));

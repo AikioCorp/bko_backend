@@ -95,6 +95,15 @@ export class CreatorProfileService {
       },
     });
 
+    const creatorRole = await prisma.role.findUnique({ where: { name: "CREATOR" } });
+    if (creatorRole) {
+      await prisma.userRole.upsert({
+        where: { userId_roleId: { userId, roleId: creatorRole.id } },
+        create: { userId, roleId: creatorRole.id },
+        update: {},
+      });
+    }
+
     return creator;
   }
 

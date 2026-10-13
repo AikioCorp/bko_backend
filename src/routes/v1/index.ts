@@ -1,7 +1,7 @@
 import { StorageFactory } from "../../services/storage/storage.factory.js";
 import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
 import { EngagementController } from "../../modules/interactions/engagement.controller.js";
-import { Router } from "express";
+import { Router, default as express } from "express";
 import { AuthController } from "../../modules/auth/auth.controller.js";
 import { UserController } from "../../modules/users/user.controller.js";
 import { InteractionController } from "../../modules/interactions/interaction.controller.js";
@@ -94,19 +94,30 @@ const playLimiter = rateLimit({
   message: { success: false, error: { code: "TOO_MANY_REQUESTS", message: "Trop d'évènements d'écoute." } },
 });
 
-// Local development uploads are saved to disk, including audio/video range playback.
-if (process.env.NODE_ENV !== "production") {
-  router.put("/mock-storage/upload", async (req, res) => {
-    const storage=StorageFactory.getProvider();
-    if(!(storage instanceof LocalMockStorageProvider)) {res.sendStatus(404);return;}
-    try {await storage.receiveUpload(String(req.query.token || ""),req);res.status(200).send("OK");}
-    catch {if(!res.headersSent) res.status(400).json({success:false,message:"Transfert local refusé ou incomplet."});}
+// Local development / mock storage uploads are saved to disk, including audio/video range playback.
+const isLocalMock = StorageFactory.getProvider() instanceof LocalMockStorageProvider;
+if (isLocalMock || process.env.NODE_ENV !== "production") {
+  router.put("/mock-storage/upload", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+    const storage = StorageFactory.getProvider();
+    if (!(storage instanceof LocalMockStorageProvider)) { res.sendStatus(404); return; }
+    try {
+      await storage.receiveUpload(String(req.query.token || ""), (req.body && Buffer.isBuffer(req.body)) ? req.body : req);
+      res.status(200).send("OK");
+    } catch (err: any) {
+      console.error("[mock-storage/upload] Error:", err);
+      if (!res.headersSent) res.status(400).json({ success: false, message: err?.message || "Transfert local refusé ou incomplet." });
+    }
   });
-  router.get("/mock-storage/file", (req,res) => {
-    const storage=StorageFactory.getProvider();
-    if(!(storage instanceof LocalMockStorageProvider)) {res.sendStatus(404);return;}
-    try {res.sendFile(storage.filePath(String(req.query.key || "")),error=>{if(error && !res.headersSent) res.sendStatus(404);});}
-    catch {res.sendStatus(400);}
+  router.get("/mock-storage/file", (req, res) => {
+    const storage = StorageFactory.getProvider();
+    if (!(storage instanceof LocalMockStorageProvider)) { res.sendStatus(404); return; }
+    try {
+      res.sendFile(storage.filePath(String(req.query.key || "")), error => {
+        if (error && !res.headersSent) res.sendStatus(404);
+      });
+    } catch {
+      res.sendStatus(400);
+    }
   });
 }
 
@@ -138,9 +149,15 @@ router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevic
 // --- PROFIL & PRÉFÉRENCES ---
 router.get("/me", authenticateToken, UserController.getMe);
 router.patch("/me", authenticateToken, UserController.updateMe);
+router.post("/me/avatar", authenticateToken, UserController.uploadAvatar);
+router.delete("/me", authenticateToken, UserController.deleteAccount);
 router.patch("/me/preferences", authenticateToken, UserController.updatePreferences);
+router.post("/me/change-password", authenticateToken, UserController.changePassword);
 router.get("/me/devices", authenticateToken, UserController.getDevices);
+router.delete("/me/devices", authenticateToken, UserController.revokeAllOtherDevices);
 router.delete("/me/devices/:id", authenticateToken, UserController.revokeDevice);
+router.post("/me/export", authenticateToken, UserController.exportData);
+router.post("/me/support-tickets", authenticateToken, UserController.submitSupportTicket);
 
 // --- CIRCUIT D'ABONNEMENT, MONÉTISATION & PAYWALL ---
 router.get("/subscriptions/plans", SubscriptionController.listPlans);
@@ -150,10 +167,19 @@ router.post("/subscriptions/buy-episode", authenticateToken, SubscriptionControl
 router.post("/subscriptions/cancel", authenticateToken, SubscriptionController.cancelSubscription);
 router.get("/episodes/:id/access", optionalAuthenticateToken, SubscriptionController.checkEpisodeAccess);
 
+// Admin: gestion des formules d'abonnement & tarifs
+router.get("/admin/subscription-plans", authenticateToken, SubscriptionController.adminListPlans);
+router.post("/admin/subscription-plans", authenticateToken, SubscriptionController.adminCreatePlan);
+router.patch("/admin/subscription-plans/:id", authenticateToken, SubscriptionController.adminUpdatePlan);
+router.patch("/admin/subscription-plans/:id/toggle", authenticateToken, SubscriptionController.adminTogglePlan);
+router.delete("/admin/subscription-plans/:id", authenticateToken, SubscriptionController.adminDeletePlan);
+
 // --- NOTIFICATIONS DANS L'APPLICATION ---
 router.get("/me/notifications", authenticateToken, NotificationController.list);
 router.get("/me/notifications/unread-count", authenticateToken, NotificationController.unreadCount);
 router.post("/me/notifications/read", authenticateToken, NotificationController.markRead);
+router.post("/me/push-token", authenticateToken, NotificationController.registerPushToken);
+router.delete("/me/push-token", authenticateToken, NotificationController.unregisterPushToken);
 
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);

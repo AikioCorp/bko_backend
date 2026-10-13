@@ -456,4 +456,105 @@ export class SubscriptionService {
       },
     };
   }
+
+  // =========================================================================
+  // GESTION ADMINISTRATION DES FORMULES D'ABONNEMENT
+  // =========================================================================
+
+  /**
+   * Lister toutes les formules (actives et inactives) pour le panneau admin.
+   */
+  static async adminListPlans() {
+    await this.listPlans(); // Auto-seeding si vide
+    return prisma.subscriptionPlan.findMany({
+      orderBy: { price: "asc" },
+      include: {
+        _count: { select: { subscriptions: true } },
+      },
+    });
+  }
+
+  /**
+   * Créer une nouvelle formule d'abonnement.
+   */
+  static async adminCreatePlan(data: {
+    name: string;
+    slug?: string;
+    price: number;
+    currency?: string;
+    interval?: string;
+    description?: string;
+    features?: string[];
+    isActive?: boolean;
+    scope?: SubscriptionScope;
+  }) {
+    const slug = data.slug || data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    return prisma.subscriptionPlan.create({
+      data: {
+        name: data.name,
+        slug,
+        price: data.price,
+        currency: data.currency || "XOF",
+        interval: data.interval || "MONTHLY",
+        description: data.description,
+        features: data.features || [],
+        isActive: data.isActive ?? true,
+        scope: data.scope || SubscriptionScope.PLATFORM,
+      },
+    });
+  }
+
+  /**
+   * Mettre à jour une formule (prix, nom, fonctionnalités, visibilité).
+   */
+  static async adminUpdatePlan(id: string, data: {
+    name?: string;
+    slug?: string;
+    price?: number;
+    currency?: string;
+    interval?: string;
+    description?: string;
+    features?: string[];
+    isActive?: boolean;
+  }) {
+    return prisma.subscriptionPlan.update({
+      where: { id },
+      data: {
+        ...(data.name && { name: data.name }),
+        ...(data.slug && { slug: data.slug }),
+        ...(data.price !== undefined && { price: data.price }),
+        ...(data.currency && { currency: data.currency }),
+        ...(data.interval && { interval: data.interval }),
+        ...(data.description !== undefined && { description: data.description }),
+        ...(data.features && { features: data.features }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
+      },
+    });
+  }
+
+  /**
+   * Masquer ou afficher rapidement une formule (toggle isActive).
+   */
+  static async adminTogglePlan(id: string) {
+    const plan = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { id } });
+    return prisma.subscriptionPlan.update({
+      where: { id },
+      data: { isActive: !plan.isActive },
+    });
+  }
+
+  /**
+   * Supprimer une formule (si aucune souscription n'est active).
+   */
+  static async adminDeletePlan(id: string) {
+    const subCount = await prisma.userSubscription.count({ where: { planId: id } });
+    if (subCount > 0) {
+      // Si des souscriptions existent, on la désactive simplement plutôt que casser l'historique
+      return prisma.subscriptionPlan.update({
+        where: { id },
+        data: { isActive: false },
+      });
+    }
+    return prisma.subscriptionPlan.delete({ where: { id } });
+  }
 }

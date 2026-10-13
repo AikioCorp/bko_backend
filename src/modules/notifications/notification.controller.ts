@@ -38,4 +38,39 @@ export class NotificationController {
       return fail(res, e);
     }
   }
+
+  static async registerPushToken(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { PushNotificationService } = await import("../../services/push-notification.service.js");
+      const schema = z.object({
+        token: z.string().min(10),
+        deviceType: z.enum(["ANDROID", "IOS", "WEB"]).default("ANDROID"),
+        deviceName: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+      const ok = await PushNotificationService.registerToken({
+        userId: req.user!.id,
+        token: data.token,
+        deviceType: data.deviceType,
+        deviceName: data.deviceName,
+      });
+      return sendSuccess(res, { registered: ok });
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async unregisterPushToken(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { PushNotificationService } = await import("../../services/push-notification.service.js");
+      const schema = z.object({
+        token: z.string().min(10),
+      });
+      const data = schema.parse(req.body);
+      await PushNotificationService.unregisterToken(data.token);
+      return sendSuccess(res, { unregistered: true });
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
 }

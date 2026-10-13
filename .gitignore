@@ -20,3 +20,4 @@ npm-debug.log*
 scratch/
 .DS_Store
 Thumbs.db
+*firebase*.json
