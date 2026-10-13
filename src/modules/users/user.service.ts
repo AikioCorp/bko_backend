@@ -63,8 +63,28 @@ export class UserService {
     };
   }
 
-  static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string; bio?: string }) {
-    const { bio, ...userData } = data;
+  static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string | null; bio?: string }) {
+    const { bio, ...userData } = data as any;
+
+    if ("phoneNumber" in data) {
+      const raw = data.phoneNumber;
+      if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+        userData.phoneNumber = null;
+      } else {
+        const trimmed = typeof raw === "string" ? raw.trim() : String(raw).trim();
+        const existing = await prisma.user.findFirst({
+          where: {
+            phoneNumber: trimmed,
+            NOT: { id: userId },
+          },
+        });
+        if (existing) {
+          throw new Error("Ce numéro de téléphone est déjà associé à un autre compte.");
+        }
+        userData.phoneNumber = trimmed;
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id: userId },
       data: userData,

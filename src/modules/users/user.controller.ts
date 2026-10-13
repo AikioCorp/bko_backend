@@ -21,7 +21,7 @@ export class UserController {
       const updated = await UserService.updateMe(req.user.id, req.body);
       return sendSuccess(res, updated);
     } catch (error: any) {
-      return sendError(res, error.message);
+      return sendError(res, error.message || "Erreur lors de la mise à jour du profil.", "UPDATE_FAILED", 400);
     }
   }
 

@@ -184,6 +184,7 @@ router.get("/me/notifications/unread-count", authenticateToken, NotificationCont
 router.post("/me/notifications/read", authenticateToken, NotificationController.markRead);
 router.post("/me/push-token", authenticateToken, NotificationController.registerPushToken);
 router.delete("/me/push-token", authenticateToken, NotificationController.unregisterPushToken);
+router.post("/notifications/campaign", optionalAuthenticateToken, NotificationController.sendCampaign);
 
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);
