@@ -29,8 +29,13 @@ const KNOWN: Record<string, [number, string]> = {
   CANNOT_LOCK_YOURSELF_OUT: [400, "Vous ne pouvez pas vous retirer la gestion des rôles"],
   REASON_REQUIRED: [400, "Un motif est requis pour suspendre un compte"],
   CREATOR_PROFILE_NOT_FOUND: [404, "Cet utilisateur n'a pas de profil créateur"],
+  CREATOR_ALREADY_EXISTS: [409, "Cet utilisateur possède déjà un profil créateur"],
+  SLUG_ALREADY_EXISTS: [409, "Ce slug d'artiste/créateur est déjà utilisé"],
   JOB_NOT_FOUND: [404, "Tâche introuvable"],
   JOB_NOT_FAILED: [409, "Seules les tâches en échec peuvent être relancées"],
+  USER_NOT_FOUND: [404, "Utilisateur introuvable"],
+  PLAN_NOT_FOUND: [404, "Formule d'abonnement introuvable"],
+  SUBSCRIPTION_NOT_FOUND: [404, "Abonnement introuvable"],
 };
 
 function fail(res: Response, error: unknown) {
@@ -245,6 +250,97 @@ export class AdminConsoleController {
     }
   }
 
+  static async listCreators(req: AuthenticatedRequest, res: Response) {
+    try {
+      const q = z
+        .object({
+          page: page.optional(),
+          limit: limit.optional(),
+          search: z.string().optional(),
+          verified: z.enum(["true", "false"]).optional(),
+          countryId: z.string().optional(),
+        })
+        .parse(req.query);
+      return sendSuccess(
+        res,
+        await AdminConsoleService.listCreators({
+          page: q.page,
+          limit: q.limit,
+          search: q.search,
+          verified: q.verified !== undefined ? q.verified === "true" : undefined,
+          countryId: q.countryId,
+        })
+      );
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async createCreator(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          userId: z.string().min(1),
+          displayName: z.string().min(1).max(100),
+          slug: z.string().min(1).max(100).optional(),
+          bio: z.string().max(3000).optional(),
+          website: z.string().url().or(z.literal("")).optional(),
+          countryId: z.string().optional(),
+          isVerified: z.boolean().optional(),
+        })
+        .parse(req.body);
+      return sendSuccess(res, await AdminConsoleService.createCreator(actor(req).id, b, req.ip), null, 201);
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async updateCreator(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          displayName: z.string().min(1).max(100).optional(),
+          slug: z.string().min(1).max(100).optional(),
+          bio: z.string().max(3000).optional(),
+          website: z.string().url().or(z.literal("")).optional(),
+          countryId: z.string().optional(),
+          isVerified: z.boolean().optional(),
+          avatar: z.string().optional(),
+          banner: z.string().optional(),
+          socialLinks: z.any().optional(),
+        })
+        .parse(req.body);
+      return sendSuccess(res, await AdminConsoleService.updateCreator(actor(req).id, idParam(req), b, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async deleteCreatorProfile(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.deleteCreatorProfile(actor(req).id, idParam(req), req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async assignPodcastToCreator(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          podcastId: z.string().min(1),
+          role: z.enum(["OWNER", "EDITOR"]).default("OWNER"),
+        })
+        .parse(req.body);
+      return sendSuccess(
+        res,
+        await AdminConsoleService.assignPodcastToCreator(actor(req).id, idParam(req), b.podcastId, b.role, req.ip)
+      );
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
   static async storage(_req: AuthenticatedRequest, res: Response) {
     try {
       return sendSuccess(res, await AdminConsoleService.getStorageOverview());
@@ -268,4 +364,88 @@ export class AdminConsoleController {
       return fail(res, e);
     }
   }
+
+  static async system(_req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.getSystemHealth());
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  // ───────────────────────── VUE 360° & ABONNEMENTS ─────────────────────────
+
+  static async getUser360(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.getUser360(idParam(req)));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async listSubscriptionPlans(_req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.listSubscriptionPlans());
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async createSubscriptionPlan(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          name: z.string().min(2).max(100),
+          slug: z.string().min(2).max(100),
+          description: z.string().max(1000).optional(),
+          price: z.number().int().min(0),
+          currency: z.string().default("XOF"),
+          interval: z.enum(["MONTHLY", "YEARLY", "LIFETIME", "ONE_TIME"]).default("MONTHLY"),
+          features: z.array(z.string()).default([]),
+          scope: z.enum(["PLATFORM", "PODCAST"]).default("PLATFORM"),
+          podcastId: z.string().optional(),
+        })
+        .parse(req.body);
+
+      return sendSuccess(res, await AdminConsoleService.createSubscriptionPlan(actor(req).id, b, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async grantUserSubscription(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          planId: z.string().min(1),
+          durationDays: z.number().int().min(1).max(3650).optional(),
+          paymentMethod: z.string().optional(),
+          note: z.string().max(500).optional(),
+        })
+        .parse(req.body);
+
+      return sendSuccess(res, await AdminConsoleService.grantUserSubscription(actor(req).id, idParam(req), b, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async cancelUserSubscription(req: AuthenticatedRequest, res: Response) {
+    try {
+      const subId = z.string().min(1).parse(req.params.subId);
+      const note = req.body?.note ? z.string().max(500).parse(req.body.note) : undefined;
+      return sendSuccess(res, await AdminConsoleService.cancelUserSubscription(actor(req).id, subId, note, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async revokeUserSessions(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.revokeUserSessions(actor(req).id, idParam(req), req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
 }
+

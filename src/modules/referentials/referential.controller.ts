@@ -5,7 +5,8 @@ import { sendSuccess, sendError } from "../../utils/response.js";
 export class ReferentialController {
   static async getCategories(req: Request, res: Response) {
     try {
-      const data = await ReferentialService.getCategories();
+      const hasContentOnly = req.query.hasContent === "true" || req.query.hasContent === "1";
+      const data = await ReferentialService.getCategories(hasContentOnly);
       return sendSuccess(res, data);
     } catch (error: any) {
       return sendError(res, error.message || "Erreur catégories.");
@@ -24,7 +25,8 @@ export class ReferentialController {
 
   static async getTopics(req: Request, res: Response) {
     try {
-      const data = await ReferentialService.getTopics();
+      const hasContentOnly = req.query.hasContent === "true" || req.query.hasContent === "1";
+      const data = await ReferentialService.getTopics(hasContentOnly);
       return sendSuccess(res, data);
     } catch (error: any) {
       return sendError(res, error.message || "Erreur sujets.");
@@ -62,7 +64,8 @@ export class ReferentialController {
 
   static async getLanguages(req: Request, res: Response) {
     try {
-      const data = await ReferentialService.getLanguages();
+      const hasContentOnly = req.query.hasContent === "true" || req.query.hasContent === "1";
+      const data = await ReferentialService.getLanguages(hasContentOnly);
       return sendSuccess(res, data);
     } catch (error: any) {
       return sendError(res, error.message || "Erreur langues.");

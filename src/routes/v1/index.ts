@@ -6,6 +6,7 @@ import { AuthController } from "../../modules/auth/auth.controller.js";
 import { UserController } from "../../modules/users/user.controller.js";
 import { InteractionController } from "../../modules/interactions/interaction.controller.js";
 import { PlaylistController } from "../../modules/playlists/playlist.controller.js";
+import { DownloadController } from "../../modules/downloads/download.controller.js";
 import { PodcastController } from "../../modules/podcasts/podcast.controller.js";
 import { EpisodeController } from "../../modules/episodes/episode.controller.js";
 import { SearchController } from "../../modules/search/search.controller.js";
@@ -27,6 +28,7 @@ import { AdminClassificationController } from "../../modules/admin/admin-classif
 import { AdminConsoleController } from "../../modules/admin/admin-console.controller.js";
 import { AdController } from "../../modules/ads/ad.controller.js";
 import { RecommendationController } from "../../modules/recommendations/recommendation.controller.js";
+import { SubscriptionController } from "../../modules/subscriptions/subscription.controller.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
 import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
@@ -139,6 +141,14 @@ router.patch("/me", authenticateToken, UserController.updateMe);
 router.patch("/me/preferences", authenticateToken, UserController.updatePreferences);
 router.get("/me/devices", authenticateToken, UserController.getDevices);
 router.delete("/me/devices/:id", authenticateToken, UserController.revokeDevice);
+
+// --- CIRCUIT D'ABONNEMENT, MONÉTISATION & PAYWALL ---
+router.get("/subscriptions/plans", SubscriptionController.listPlans);
+router.get("/subscriptions/me", authenticateToken, SubscriptionController.getMySubscription);
+router.post("/subscriptions/checkout", authenticateToken, SubscriptionController.checkout);
+router.post("/subscriptions/buy-episode", authenticateToken, SubscriptionController.buyEpisode);
+router.post("/subscriptions/cancel", authenticateToken, SubscriptionController.cancelSubscription);
+router.get("/episodes/:id/access", optionalAuthenticateToken, SubscriptionController.checkEpisodeAccess);
 
 // --- NOTIFICATIONS DANS L'APPLICATION ---
 router.get("/me/notifications", authenticateToken, NotificationController.list);
@@ -264,10 +274,22 @@ router.post("/admin/reviews/podcasts/:id", authenticateToken, requirePermission(
 router.get("/admin/reports", authenticateToken, requirePermission("moderation.view"), AdminConsoleController.listReports);
 router.patch("/admin/reports/:id", authenticateToken, requirePermission("moderation.edit"), AdminConsoleController.handleReport);
 router.get("/admin/users", authenticateToken, requirePermission("users.view"), AdminConsoleController.listUsers);
+router.get("/admin/users/:id/360", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
+router.get("/admin/users/:id", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
 router.put("/admin/users/:id/roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserRoles);
 router.post("/admin/users/:id/suspension", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserSuspension);
 router.delete("/admin/users/:id", authenticateToken, requirePermission("users.delete"), AdminConsoleController.deleteUser);
 router.post("/admin/users/:id/creator-verification", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setCreatorVerification);
+router.post("/admin/users/:id/sessions/revoke", authenticateToken, requirePermission("users.edit"), AdminConsoleController.revokeUserSessions);
+router.post("/admin/users/:id/subscriptions", authenticateToken, requirePermission("users.edit"), AdminConsoleController.grantUserSubscription);
+router.post("/admin/users/:id/subscriptions/:subId/cancel", authenticateToken, requirePermission("users.edit"), AdminConsoleController.cancelUserSubscription);
+router.get("/admin/subscription-plans", authenticateToken, requirePermission("settings.view"), AdminConsoleController.listSubscriptionPlans);
+router.post("/admin/subscription-plans", authenticateToken, requirePermission("settings.edit"), AdminConsoleController.createSubscriptionPlan);
+router.get("/admin/creators", authenticateToken, requirePermission("users.view"), AdminConsoleController.listCreators);
+router.post("/admin/creators", authenticateToken, requirePermission("users.edit"), AdminConsoleController.createCreator);
+router.patch("/admin/creators/:id", authenticateToken, requirePermission("users.edit"), AdminConsoleController.updateCreator);
+router.delete("/admin/creators/:id", authenticateToken, requirePermission("users.delete"), AdminConsoleController.deleteCreatorProfile);
+router.post("/admin/creators/:id/assign-podcast", authenticateToken, requirePermission("users.edit"), AdminConsoleController.assignPodcastToCreator);
 router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
 router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);
 router.get("/admin/roles", authenticateToken, requirePermission("roles.view"), AdminConsoleController.listRoles);
@@ -278,6 +300,7 @@ router.delete("/admin/roles/:id", authenticateToken, requirePermission("roles.de
 router.get("/admin/storage", authenticateToken, requirePermission("storage.view"), AdminConsoleController.storage);
 router.post("/admin/jobs/:id/retry", authenticateToken, requirePermission("storage.edit"), AdminConsoleController.retryJob);
 router.get("/admin/settings", authenticateToken, requirePermission("settings.view"), AdminConsoleController.settings);
+router.get("/admin/system", authenticateToken, requirePermission("settings.view"), AdminConsoleController.system);
 
 // Signalement d'un contenu par un utilisateur connecté (limité pour éviter le spam)
 router.post("/reports", authenticateToken, accountLimiter(10), AdminConsoleController.createReport);
@@ -395,6 +418,13 @@ router.patch("/playlists/:id", authenticateToken, PlaylistController.updatePlayl
 router.delete("/playlists/:id", authenticateToken, PlaylistController.deletePlaylist);
 router.post("/playlists/:id/items", authenticateToken, PlaylistController.addItemToPlaylist);
 router.delete("/playlists/:id/items/:episodeId", authenticateToken, PlaylistController.removeItemFromPlaylist);
+
+// --- TÉLÉCHARGEMENTS & SYNCHRONISATION APPAREILS ---
+router.post("/downloads/device-sync", authenticateToken, DownloadController.syncDevice);
+router.get("/downloads/device-status", authenticateToken, DownloadController.getDeviceStatus);
+router.post("/downloads/remote-queue", authenticateToken, DownloadController.queueRemoteDownload);
+router.get("/downloads/remote-queue", authenticateToken, DownloadController.getPendingRemoteDownloads);
+router.post("/downloads/remote-queue/:id/ack", authenticateToken, DownloadController.ackRemoteDownload);
 
 // --- RECHERCHE, DÉCOUVERTE & CATALOGUE ---
 router.get("/search", SearchController.search);

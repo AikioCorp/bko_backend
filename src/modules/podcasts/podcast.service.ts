@@ -12,13 +12,23 @@ export class PodcastService {
     cursor?: string;
     offset?: number;
     sort?: "recent" | "oldest" | "popular";
+    hasEpisodes?: boolean;
+    hasContent?: boolean;
   }) {
-    const { countryId, languageCode, categorySlug, topicSlug, search, limit = 20, cursor, offset, sort = "recent" } = params;
+    const { countryId, languageCode, categorySlug, topicSlug, search, limit = 20, cursor, offset, sort = "recent", hasEpisodes, hasContent } = params;
 
     // Filtre strict : Uniquement podcasts PUBLIÉS pour la vue publique
     const where: any = {
       status: "PUBLISHED",
     };
+
+    if (hasEpisodes || hasContent) {
+      where.episodes = {
+        some: {
+          status: "PUBLISHED",
+        },
+      };
+    }
 
     if (countryId) {
       where.countryId = countryId;

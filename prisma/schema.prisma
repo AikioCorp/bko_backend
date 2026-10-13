@@ -342,6 +342,10 @@ model User {
   PodcastRating PodcastRating[]
   EpisodeLike   EpisodeLike[]
   Comment       Comment[]
+
+  // Monétisation & Abonnements
+  subscriptions       UserSubscription[]
+  paymentTransactions PaymentTransaction[]
 }
 
 model Role {
@@ -606,6 +610,7 @@ model Podcast {
   managedByBamakoPodcast Boolean                @default(false)
   isOfficial             Boolean                @default(false)
   qualityScore           Int                    @default(70)
+  isPremium              Boolean                @default(false)
 
   website     String?
   redirectUrl String?
@@ -631,6 +636,7 @@ model Podcast {
   contentFeedback  UserContentFeedback[]
   recommendationImpressions RecommendationImpression[]
   attributionInteractions RecommendationInteraction[]
+  subscriptionPlans SubscriptionPlan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -755,6 +761,8 @@ model Episode {
   summary     String?     @db.Text
   episodeType EpisodeType @default(FULL)
   explicit    Boolean     @default(false)
+  isPremium   Boolean     @default(false)
+  premiumPrice Int?
 
   languageCode String?
   language     Language? @relation(fields: [languageCode], references: [code])
@@ -784,6 +792,7 @@ model Episode {
   updatedAt   DateTime      @updatedAt
   EpisodeLike EpisodeLike[]
   Comment     Comment[]
+  paymentTransactions PaymentTransaction[]
 
   @@unique([podcastId, slug])
   @@index([publishedAt])
@@ -1771,6 +1780,79 @@ model RecommendationDailyMetric {
 
   @@unique([date, variant, sectionSlug])
   @@index([date])
+}
+
+// ======================================================
+// MONÉTISATION, ABONNEMENTS ET TRANSACTIONS
+// ======================================================
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+  TRIAL
+  PAUSED
+}
+
+enum SubscriptionScope {
+  PLATFORM
+  PODCAST
+}
+
+model SubscriptionPlan {
+  id          String            @id @default(cuid())
+  name        String
+  slug        String            @unique
+  description String?           @db.Text
+  price       Int               // Montant en FCFA (ex: 2000)
+  currency    String            @default("XOF")
+  interval    String            @default("MONTHLY") // MONTHLY, YEARLY, LIFETIME, ONE_TIME
+  features    String[]
+  isActive    Boolean           @default(true)
+  scope       SubscriptionScope @default(PLATFORM)
+  podcastId   String?
+  podcast     Podcast?          @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  subscriptions UserSubscription[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model UserSubscription {
+  id                 String             @id @default(cuid())
+  userId             String
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  status             SubscriptionStatus @default(ACTIVE)
+  paymentMethod      String             @default("ORANGE_MONEY") // ORANGE_MONEY, WAVE, MOOV_MONEY, CARD, ADMIN_GRANT
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  canceledAt         DateTime?
+  transactions       PaymentTransaction[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([userId, status])
+}
+
+model PaymentTransaction {
+  id             String            @id @default(cuid())
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  episodeId      String?
+  episode        Episode?          @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  amount         Int               // Montant en FCFA
+  currency       String            @default("XOF")
+  status         String            @default("SUCCESS") // SUCCESS, PENDING, FAILED, REFUNDED
+  paymentMethod  String            // ORANGE_MONEY, WAVE, MOOV_MONEY, CARD, ADMIN_GRANT
+  transactionRef String?
+  note           String?
+  createdAt      DateTime          @default(now())
+
+  @@index([userId, createdAt])
 }
 
 

@@ -16,6 +16,7 @@ export class PodcastController {
       const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
       const sort = (req.query.sort as any) || "recent";
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const hasContent = req.query.hasContent === "true" || req.query.hasContent === "1" || req.query.hasEpisodes === "true";
 
       const result = await PodcastService.getPodcasts({
         countryId,
@@ -27,6 +28,7 @@ export class PodcastController {
         offset,
         sort,
         limit,
+        hasContent,
       });
 
       return sendSuccess(res, result.data, { pagination: result.pagination });

@@ -1,4 +1,4 @@
-import { Prisma, ReportStatus, ReportTargetType, ReportReason } from "@prisma/client";
+import { Prisma, ReportStatus, ReportTargetType, ReportReason, SubscriptionStatus, SubscriptionScope } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AuditService } from "../../services/audit.service.js";
 import { FeatureFlags } from "../../config/feature-flags.js";
@@ -365,6 +365,308 @@ export class AdminConsoleService {
     return { userId, isVerified: verified };
   }
 
+  // ───────────────────────── GESTION DES CRÉATEURS ─────────────────────────
+
+  static async listCreators(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    verified?: boolean;
+    countryId?: string;
+  }) {
+    const page = Math.max(1, params.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (params.search) {
+      where.OR = [
+        { displayName: { contains: params.search, mode: "insensitive" } },
+        { slug: { contains: params.search, mode: "insensitive" } },
+        { bio: { contains: params.search, mode: "insensitive" } },
+        { user: { email: { contains: params.search, mode: "insensitive" } } },
+        { user: { fullName: { contains: params.search, mode: "insensitive" } } },
+      ];
+    }
+    if (typeof params.verified === "boolean") {
+      where.isVerified = params.verified;
+    }
+    if (params.countryId) {
+      where.countryId = params.countryId;
+    }
+
+    const [items, total, verifiedCount, totalFollowers] = await Promise.all([
+      prisma.creatorProfile.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              fullName: true,
+              isSuspended: true,
+              suspendedReason: true,
+              createdAt: true,
+              userRoles: { select: { role: { select: { name: true } } } },
+            },
+          },
+          country: { select: { id: true, name: true, code: true, flagEmoji: true } },
+          _count: { select: { followers: true } },
+          marketAccess: {
+            select: {
+              id: true,
+              status: true,
+              canCreatePodcast: true,
+              canPublish: true,
+              canMonetize: true,
+              market: { select: { id: true, countryId: true, country: { select: { code: true, name: true, flagEmoji: true } } } },
+            },
+          },
+        },
+      }),
+      prisma.creatorProfile.count({ where }),
+      prisma.creatorProfile.count({ where: { isVerified: true } }),
+      prisma.creatorFollow.count(),
+    ]);
+
+    const userIds = items.map((i) => i.userId);
+    const podcastMembers = userIds.length
+      ? await prisma.podcastMember.findMany({
+          where: { userId: { in: userIds } },
+          include: {
+            podcast: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                cover: true,
+                status: true,
+                _count: { select: { episodes: true } },
+              },
+            },
+          },
+        })
+      : [];
+
+    const podcastsByUser = new Map<string, any[]>();
+    for (const pm of podcastMembers) {
+      const list = podcastsByUser.get(pm.userId) || [];
+      list.push(pm.podcast);
+      podcastsByUser.set(pm.userId, list);
+    }
+
+    return {
+      items: items.map((c) => ({
+        id: c.id,
+        userId: c.userId,
+        displayName: c.displayName,
+        slug: c.slug,
+        bio: c.bio,
+        avatar: c.avatar,
+        banner: c.banner,
+        website: c.website,
+        socialLinks: c.socialLinks,
+        isVerified: c.isVerified,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        country: c.country,
+        user: {
+          ...c.user,
+          roles: c.user.userRoles.map((r) => r.role.name),
+        },
+        followersCount: c._count.followers,
+        marketAccess: c.marketAccess,
+        podcasts: podcastsByUser.get(c.userId) || [],
+        podcastsCount: (podcastsByUser.get(c.userId) || []).length,
+      })),
+      total,
+      page,
+      limit,
+      stats: {
+        totalCreators: total,
+        verifiedCount,
+        totalFollowers,
+      },
+    };
+  }
+
+  static async createCreator(
+    actorId: string,
+    data: {
+      userId: string;
+      displayName: string;
+      slug?: string;
+      bio?: string;
+      website?: string;
+      countryId?: string;
+      isVerified?: boolean;
+    },
+    ip?: string
+  ) {
+    const user = await prisma.user.findUnique({ where: { id: data.userId } });
+    if (!user) throw new Error("NOT_FOUND");
+
+    const existing = await prisma.creatorProfile.findUnique({ where: { userId: data.userId } });
+    if (existing) throw new Error("CREATOR_ALREADY_EXISTS");
+
+    const slugBase = (data.slug || data.displayName || user.fullName || "creator")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .replace(/[\s-]+/g, "-")
+      .replace(/[^\w-]+/g, "");
+    let slug = slugBase || "creator";
+    let count = 1;
+    while (await prisma.creatorProfile.findUnique({ where: { slug } })) {
+      count++;
+      slug = `${slugBase}-${count}`;
+    }
+
+    const profile = await prisma.creatorProfile.create({
+      data: {
+        userId: data.userId,
+        displayName: data.displayName,
+        slug,
+        bio: data.bio,
+        website: data.website,
+        countryId: data.countryId,
+        isVerified: Boolean(data.isVerified),
+      },
+      include: {
+        country: true,
+        user: { select: { id: true, email: true, fullName: true } },
+      },
+    });
+
+    const creatorRole = await prisma.role.findUnique({ where: { name: "CREATOR" } });
+    if (creatorRole) {
+      await prisma.userRole.upsert({
+        where: { userId_roleId: { userId: data.userId, roleId: creatorRole.id } },
+        create: { userId: data.userId, roleId: creatorRole.id },
+        update: {},
+      });
+    }
+
+    await AuditService.logAction({
+      actorId,
+      action: "CREATOR_CREATED",
+      entityType: "CreatorProfile",
+      entityId: profile.id,
+      newState: { displayName: profile.displayName, slug: profile.slug, isVerified: profile.isVerified },
+      ipAddress: ip,
+    });
+
+    return profile;
+  }
+
+  static async updateCreator(
+    actorId: string,
+    profileId: string,
+    data: {
+      displayName?: string;
+      slug?: string;
+      bio?: string;
+      website?: string;
+      countryId?: string;
+      isVerified?: boolean;
+      avatar?: string;
+      banner?: string;
+      socialLinks?: any;
+    },
+    ip?: string
+  ) {
+    const profile = await prisma.creatorProfile.findUnique({ where: { id: profileId } });
+    if (!profile) throw new Error("NOT_FOUND");
+
+    if (data.slug && data.slug !== profile.slug) {
+      const clash = await prisma.creatorProfile.findUnique({ where: { slug: data.slug } });
+      if (clash) throw new Error("SLUG_ALREADY_EXISTS");
+    }
+
+    const updated = await prisma.creatorProfile.update({
+      where: { id: profileId },
+      data: {
+        displayName: data.displayName ?? profile.displayName,
+        slug: data.slug ?? profile.slug,
+        bio: data.bio !== undefined ? data.bio : profile.bio,
+        website: data.website !== undefined ? data.website : profile.website,
+        countryId: data.countryId !== undefined ? data.countryId : profile.countryId,
+        isVerified: data.isVerified !== undefined ? data.isVerified : profile.isVerified,
+        avatar: data.avatar !== undefined ? data.avatar : profile.avatar,
+        banner: data.banner !== undefined ? data.banner : profile.banner,
+        socialLinks: data.socialLinks !== undefined ? data.socialLinks : profile.socialLinks,
+      },
+      include: {
+        country: true,
+        user: { select: { id: true, email: true, fullName: true } },
+      },
+    });
+
+    await AuditService.logAction({
+      actorId,
+      action: "CREATOR_UPDATED",
+      entityType: "CreatorProfile",
+      entityId: profile.id,
+      newState: data,
+      ipAddress: ip,
+    });
+
+    return updated;
+  }
+
+  static async deleteCreatorProfile(actorId: string, profileId: string, ip?: string) {
+    const profile = await prisma.creatorProfile.findUnique({ where: { id: profileId } });
+    if (!profile) throw new Error("NOT_FOUND");
+
+    await prisma.creatorProfile.delete({ where: { id: profileId } });
+
+    await AuditService.logAction({
+      actorId,
+      action: "CREATOR_DELETED",
+      entityType: "CreatorProfile",
+      entityId: profileId,
+      previousState: { displayName: profile.displayName, slug: profile.slug },
+      ipAddress: ip,
+    });
+
+    return { success: true };
+  }
+
+  static async assignPodcastToCreator(
+    actorId: string,
+    profileId: string,
+    podcastId: string,
+    role: "OWNER" | "EDITOR" = "OWNER",
+    ip?: string
+  ) {
+    const profile = await prisma.creatorProfile.findUnique({ where: { id: profileId } });
+    if (!profile) throw new Error("NOT_FOUND");
+
+    const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });
+    if (!podcast) throw new Error("NOT_FOUND");
+
+    await prisma.podcastMember.upsert({
+      where: { podcastId_userId: { podcastId, userId: profile.userId } },
+      create: { podcastId, userId: profile.userId, role },
+      update: { role },
+    });
+
+    await AuditService.logAction({
+      actorId,
+      action: "PODCAST_ASSIGNED_TO_CREATOR",
+      entityType: "Podcast",
+      entityId: podcastId,
+      newState: { creatorProfileId: profile.id, userId: profile.userId, role },
+      ipAddress: ip,
+    });
+
+    return { success: true, podcastId, userId: profile.userId, role };
+  }
+
   // ───────────────────────── STOCKAGE & JOBS ─────────────────────────
 
   static async getStorageOverview() {
@@ -510,4 +812,571 @@ export class AdminConsoleService {
       environment: process.env.NODE_ENV ?? "development",
     };
   }
+
+  /** État du système, santé de la base, mémoire, et services d'arrière-plan. */
+  static async getSystemHealth() {
+    const startTime = Date.now();
+    let dbStatus = "HEALTHY";
+    let dbLatencyMs = 0;
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbLatencyMs = Date.now() - startTime;
+    } catch {
+      dbStatus = "DOWN";
+    }
+
+    const [usersCount, podcastsCount, episodesCount, mediaAssetsCount, pendingJobsCount, failedJobsCount] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.podcast.count(),
+        prisma.episode.count(),
+        prisma.mediaAsset.count(),
+        prisma.jobQueueItem.count({ where: { status: "PENDING" } }),
+        prisma.jobQueueItem.count({ where: { status: "FAILED" } }),
+      ]);
+
+    const mem = process.memoryUsage();
+
+    return {
+      status: "ONLINE",
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      environment: process.env.NODE_ENV || "development",
+      database: {
+        status: dbStatus,
+        latencyMs: dbLatencyMs,
+        client: "PostgreSQL",
+      },
+      memory: {
+        rssMb: Math.round(mem.rss / 1024 / 1024),
+        heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+      counts: {
+        users: usersCount,
+        podcasts: podcastsCount,
+        episodes: episodesCount,
+        mediaAssets: mediaAssetsCount,
+        pendingJobs: pendingJobsCount,
+        failedJobs: failedJobsCount,
+      },
+      services: [
+        { name: "API HTTP REST (Express)", status: "OPERATIONAL", port: 8080 },
+        { name: "PostgreSQL Database", status: dbStatus === "HEALTHY" ? "OPERATIONAL" : "DEGRADED" },
+        { name: "Stockage Média S3 / Cloudflare R2", status: process.env.R2_ENDPOINT ? "OPERATIONAL" : "LOCAL_FALLBACK" },
+        { name: "File de traitement (Job Queue Worker)", status: failedJobsCount > 5 ? "DEGRADED" : "OPERATIONAL" },
+        { name: "Service de Vectorisation (Embeddings)", status: "OPERATIONAL" },
+        { name: "Moteur de Transcription (Whisper)", status: process.env.OPENAI_API_KEY ? "CONFIGURED" : "STANDBY" },
+      ],
+    };
+  }
+
+  // ───────────────────────── VUE 360° UTILISATEUR & MONÉTISATION ─────────────────────────
+
+  static async getUser360(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        userRoles: { include: { role: true } },
+        creatorProfile: {
+          include: {
+            country: true,
+            _count: { select: { followers: true } },
+          },
+        },
+        podcastMemberships: {
+          include: {
+            podcast: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                cover: true,
+                status: true,
+                _count: { select: { episodes: true } },
+              },
+            },
+          },
+        },
+        languagePreferences: { include: { language: true } },
+        topicPreferences: { include: { topic: true } },
+        countryPreferences: { include: { country: true } },
+        notificationPreference: true,
+        recommendationProfile: true,
+        devices: {
+          orderBy: { lastActiveAt: "desc" },
+          take: 10,
+        },
+        sessions: {
+          orderBy: { createdAt: "desc" },
+          take: 10,
+        },
+        subscriptions: {
+          orderBy: { createdAt: "desc" },
+          include: { plan: true },
+        },
+        paymentTransactions: {
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          include: {
+            subscription: { include: { plan: true } },
+            episode: { select: { id: true, title: true, slug: true, cover: true } },
+          },
+        },
+      },
+    });
+
+    if (!user) throw new Error("USER_NOT_FOUND");
+
+    const [
+      playbackHistories,
+      savedEpisodes,
+      playlists,
+      podcastFollows,
+      creatorFollows,
+      userLikes,
+      userComments,
+      claimsCount,
+      reportsCount,
+      auditLogs,
+    ] = await Promise.all([
+      prisma.playbackHistory.findMany({
+        where: { userId },
+        orderBy: { lastPlayedAt: "desc" },
+        take: 100,
+        include: {
+          episode: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              cover: true,
+              durationSeconds: true,
+              isPremium: true,
+              premiumPrice: true,
+              podcast: {
+                select: { id: true, name: true, slug: true, cover: true },
+              },
+            },
+          },
+        },
+      }),
+      prisma.savedEpisode.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          episode: {
+            select: {
+              id: true,
+              title: true,
+              slug: true,
+              cover: true,
+              durationSeconds: true,
+              podcast: { select: { id: true, name: true, slug: true, cover: true } },
+            },
+          },
+        },
+      }),
+      prisma.playlist.findMany({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          _count: { select: { items: true } },
+        },
+      }),
+      prisma.podcastFollow.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        include: {
+          podcast: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              cover: true,
+              primaryLanguageCode: true,
+              _count: { select: { episodes: true } },
+            },
+          },
+        },
+      }),
+      prisma.creatorFollow.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        include: {
+          creatorProfile: {
+            select: {
+              id: true,
+              displayName: true,
+              slug: true,
+              avatar: true,
+              isVerified: true,
+            },
+          },
+        },
+      }),
+      prisma.episodeLike.count({ where: { userId } }),
+      prisma.comment.count({ where: { userId } }),
+      prisma.claim.count({ where: { userId } }),
+      prisma.report.count({ where: { reporterId: userId } }),
+      prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { actorId: userId },
+            { entityId: userId },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      }),
+    ]);
+
+    // Calculs de consommation
+    const totalListensCount = playbackHistories.length;
+    const completedListensCount = playbackHistories.filter((h) => h.completed).length;
+    const totalListenSeconds = playbackHistories.reduce((acc, h) => acc + (h.positionSeconds || 0), 0);
+    const completionRate = totalListensCount > 0 ? Math.round((completedListensCount / totalListensCount) * 100) : 0;
+
+    // Total monétisation dépensé
+    const totalSpent = user.paymentTransactions
+      .filter((t) => t.status === "SUCCESS")
+      .reduce((acc, t) => acc + t.amount, 0);
+
+    const now = new Date();
+    const activeSubscription = user.subscriptions.find(
+      (s) => s.status === SubscriptionStatus.ACTIVE && new Date(s.currentPeriodEnd) > now
+    );
+
+    // Podcasts les plus écoutés
+    const podcastStatsMap = new Map<string, { id: string; name: string; slug: string; cover: string; plays: number; totalSeconds: number }>();
+    for (const h of playbackHistories) {
+      if (!h.episode?.podcast) continue;
+      const pod = h.episode.podcast;
+      const existing = podcastStatsMap.get(pod.id) || {
+        id: pod.id,
+        name: pod.name,
+        slug: pod.slug,
+        cover: pod.cover,
+        plays: 0,
+        totalSeconds: 0,
+      };
+      existing.plays += 1;
+      existing.totalSeconds += h.positionSeconds || 0;
+      podcastStatsMap.set(pod.id, existing);
+    }
+    const topListenedPodcasts = Array.from(podcastStatsMap.values())
+      .sort((a, b) => b.totalSeconds - a.totalSeconds)
+      .slice(0, 5);
+
+    return {
+      profile: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        avatar: user.avatar,
+        isVerified: user.isVerified,
+        isSuspended: user.isSuspended,
+        suspendedAt: user.suspendedAt,
+        suspendedReason: user.suspendedReason,
+        createdAt: user.createdAt,
+        roles: user.userRoles.map((ur) => ur.role.name),
+        creatorProfile: user.creatorProfile,
+        podcastMemberships: user.podcastMemberships,
+      },
+      monetization: {
+        hasActiveSubscription: !!activeSubscription,
+        activeSubscription,
+        subscriptions: user.subscriptions,
+        transactions: user.paymentTransactions,
+        totalSpent,
+        currency: "XOF",
+      },
+      analytics: {
+        totalListenSeconds,
+        totalListenHours: Math.round((totalListenSeconds / 3600) * 10) / 10,
+        totalListensCount,
+        completedListensCount,
+        completionRate,
+        topListenedPodcasts,
+        likesCount: userLikes,
+        commentsCount: userComments,
+        savedCount: savedEpisodes.length,
+        followsCount: podcastFollows.length,
+        creatorFollowsCount: creatorFollows.length,
+        playlistsCount: playlists.length,
+      },
+      preferences: {
+        languages: user.languagePreferences.map((lp) => ({
+          code: lp.languageCode,
+          name: lp.language.name,
+          nativeName: lp.language.nativeName,
+        })),
+        topics: user.topicPreferences.map((tp) => ({
+          name: tp.topic.name,
+          slug: tp.topic.slug,
+        })),
+        countries: user.countryPreferences.map((cp) => ({
+          code: cp.country.code,
+          name: cp.country.name,
+          flagEmoji: cp.country.flagEmoji,
+        })),
+        notifications: user.notificationPreference,
+        recommendationProfile: user.recommendationProfile,
+      },
+      activity: {
+        recentPlaybackHistory: playbackHistories.slice(0, 40),
+        savedEpisodes,
+        playlists,
+        podcastFollows,
+        creatorFollows,
+      },
+      technical: {
+        devices: user.devices,
+        sessions: user.sessions,
+        claimsCount,
+        reportsCount,
+        auditLogs,
+      },
+    };
+  }
+
+  static async listSubscriptionPlans() {
+    let plans = await prisma.subscriptionPlan.findMany({
+      orderBy: { price: "asc" },
+      include: {
+        _count: { select: { subscriptions: true } },
+      },
+    });
+
+    if (plans.length === 0) {
+      await prisma.subscriptionPlan.createMany({
+        data: [
+          {
+            name: "Pass Bamako Podcast Illimité",
+            slug: "pass-illimite-mensuel",
+            price: 2000,
+            currency: "XOF",
+            interval: "MONTHLY",
+            description: "Accès illimité à 100% des épisodes exclusifs, écoute sans coupure publicitaire et son haute définition.",
+            features: [
+              "Écoute sans coupures publicitaires",
+              "Accès à tous les épisodes payants",
+              "Téléchargement hors-ligne illimité",
+              "Badge Auditeur VIP dans la communauté",
+            ],
+            isActive: true,
+            scope: SubscriptionScope.PLATFORM,
+          },
+          {
+            name: "Pass Annuel Privilège",
+            slug: "pass-annuel-privilege",
+            price: 20000,
+            currency: "XOF",
+            interval: "YEARLY",
+            description: "12 mois d'accès illimité avec 2 mois offerts + invitations aux enregistrements live en studio à Bamako.",
+            features: [
+              "2 mois offerts chaque année",
+              "Accès prioritaire aux avant-premières",
+              "Invitations aux sessions live en studio",
+              "Support VIP direct via WhatsApp",
+            ],
+            isActive: true,
+            scope: SubscriptionScope.PLATFORM,
+          },
+          {
+            name: "Soutien Créateur Mensuel",
+            slug: "soutien-createur-mensuel",
+            price: 1000,
+            currency: "XOF",
+            interval: "MONTHLY",
+            description: "Abonnement direct pour soutenir les créateurs indépendants du Mali et accéder à leurs bonus exclusifs.",
+            features: [
+              "Épisodes bonus et coulisses réservés",
+              "Salon de discussion privé avec les créateurs",
+              "Accès anticipé 48h avant tout le monde",
+            ],
+            isActive: true,
+            scope: SubscriptionScope.PLATFORM,
+          },
+        ],
+      });
+
+      plans = await prisma.subscriptionPlan.findMany({
+        orderBy: { price: "asc" },
+        include: {
+          _count: { select: { subscriptions: true } },
+        },
+      });
+    }
+
+    return plans;
+  }
+
+  static async createSubscriptionPlan(
+    actorId: string,
+    data: {
+      name: string;
+      slug: string;
+      description?: string;
+      price: number;
+      currency?: string;
+      interval?: string;
+      features: string[];
+      scope?: SubscriptionScope;
+      podcastId?: string;
+    },
+    ip?: string
+  ) {
+    const existing = await prisma.subscriptionPlan.findUnique({ where: { slug: data.slug } });
+    if (existing) throw new Error("SLUG_ALREADY_EXISTS");
+
+    const plan = await prisma.subscriptionPlan.create({
+      data: {
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        price: data.price,
+        currency: data.currency || "XOF",
+        interval: data.interval || "MONTHLY",
+        features: data.features || [],
+        scope: data.scope || SubscriptionScope.PLATFORM,
+        podcastId: data.podcastId,
+      },
+    });
+
+    await AuditService.logAction({
+      actorId,
+      action: "CREATE_SUBSCRIPTION_PLAN",
+      entityType: "SUBSCRIPTION_PLAN",
+      entityId: plan.id,
+      ipAddress: ip,
+      newState: { name: plan.name, price: plan.price },
+    });
+
+    return plan;
+  }
+
+  static async grantUserSubscription(
+    actorId: string,
+    userId: string,
+    data: { planId: string; durationDays?: number; paymentMethod?: string; note?: string },
+    ip?: string
+  ) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error("USER_NOT_FOUND");
+    const plan = await prisma.subscriptionPlan.findUnique({ where: { id: data.planId } });
+    if (!plan) throw new Error("PLAN_NOT_FOUND");
+
+    const days = data.durationDays || (plan.interval === "YEARLY" ? 365 : 30);
+    const startDate = new Date();
+    const endDate = new Date(startDate.getTime() + days * 24 * 60 * 60 * 1000);
+
+    const subscription = await prisma.$transaction(async (tx) => {
+      await tx.userSubscription.updateMany({
+        where: { userId, status: SubscriptionStatus.ACTIVE },
+        data: { status: SubscriptionStatus.CANCELED, canceledAt: new Date() },
+      });
+
+      const sub = await tx.userSubscription.create({
+        data: {
+          userId,
+          planId: plan.id,
+          status: SubscriptionStatus.ACTIVE,
+          paymentMethod: data.paymentMethod || "ADMIN_GRANT",
+          currentPeriodStart: startDate,
+          currentPeriodEnd: endDate,
+        },
+        include: { plan: true },
+      });
+
+      await tx.paymentTransaction.create({
+        data: {
+          userId,
+          subscriptionId: sub.id,
+          amount: plan.price,
+          currency: plan.currency,
+          status: "SUCCESS",
+          paymentMethod: data.paymentMethod || "ADMIN_GRANT",
+          transactionRef: `ADMIN-GRANT-${Date.now()}`,
+          note: data.note || "Abonnement offert par la direction",
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId,
+          title: "Abonnement Premium activé !",
+          body: `Votre formule « ${plan.name} » est active jusqu'au ${endDate.toLocaleDateString("fr-FR")}. Vous bénéficiez de tous les privilèges.`,
+          link: "/premium",
+          type: "SUBSCRIPTION_ACTIVATED",
+        },
+      });
+
+      return sub;
+    });
+
+    await AuditService.logAction({
+      actorId,
+      action: "GRANT_USER_SUBSCRIPTION",
+      entityType: "USER",
+      entityId: userId,
+      ipAddress: ip,
+      newState: { planId: plan.id, planName: plan.name, durationDays: days, note: data.note },
+    });
+
+    return subscription;
+  }
+
+  static async cancelUserSubscription(actorId: string, subscriptionId: string, note?: string, ip?: string) {
+    const sub = await prisma.userSubscription.findUnique({
+      where: { id: subscriptionId },
+      include: { plan: true, user: true },
+    });
+    if (!sub) throw new Error("SUBSCRIPTION_NOT_FOUND");
+
+    const updated = await prisma.userSubscription.update({
+      where: { id: subscriptionId },
+      data: {
+        status: SubscriptionStatus.CANCELED,
+        canceledAt: new Date(),
+      },
+    });
+
+    await AuditService.logAction({
+      actorId,
+      action: "CANCEL_USER_SUBSCRIPTION",
+      entityType: "USER_SUBSCRIPTION",
+      entityId: subscriptionId,
+      ipAddress: ip,
+      newState: { userId: sub.userId, planName: sub.plan.name, note },
+    });
+
+    return updated;
+  }
+
+  static async revokeUserSessions(actorId: string, userId: string, ip?: string) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error("USER_NOT_FOUND");
+
+    const [deletedSessions, deletedRefresh] = await Promise.all([
+      prisma.session.deleteMany({ where: { userId } }),
+      prisma.refreshToken.deleteMany({ where: { userId } }),
+    ]);
+
+    await AuditService.logAction({
+      actorId,
+      action: "REVOKE_USER_SESSIONS",
+      entityType: "USER",
+      entityId: userId,
+      ipAddress: ip,
+      newState: { deletedSessionsCount: deletedSessions.count, deletedRefreshCount: deletedRefresh.count },
+    });
+
+    return { revokedCount: deletedSessions.count + deletedRefresh.count };
+  }
 }
+

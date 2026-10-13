@@ -101,7 +101,59 @@ export class ClaimService {
             role: PodcastMemberRole.OWNER,
           },
         });
+
+        // 3. Assurer le rôle CREATOR à l'utilisateur
+        const creatorRole = await tx.role.findUnique({ where: { name: "CREATOR" } });
+        if (creatorRole) {
+          await tx.userRole.upsert({
+            where: { userId_roleId: { userId: claim.userId, roleId: creatorRole.id } },
+            create: { userId: claim.userId, roleId: creatorRole.id },
+            update: {},
+          });
+        }
+
+        // 4. Initialiser un profil créateur s'il n'en a pas
+        const existingProfile = await tx.creatorProfile.findUnique({ where: { userId: claim.userId } });
+        if (!existingProfile) {
+          const claimantUser = await tx.user.findUnique({ where: { id: claim.userId } });
+          const baseSlug = (claimantUser?.fullName || "createur")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim()
+            .replace(/[\s-]+/g, "-")
+            .replace(/[^\w-]+/g, "");
+          let slug = baseSlug || "createur";
+          let cnt = 1;
+          while (await tx.creatorProfile.findUnique({ where: { slug } })) {
+            cnt++;
+            slug = `${baseSlug}-${cnt}`;
+          }
+          await tx.creatorProfile.create({
+            data: {
+              userId: claim.userId,
+              displayName: claimantUser?.fullName || claim.podcast.name,
+              slug,
+              bio: `Créateur et propriétaire de l'émission ${claim.podcast.name}`,
+              isVerified: true,
+            },
+          });
+        }
       }
+
+      // 5. Envoyer une notification dans l'app
+      await tx.notification.create({
+        data: {
+          userId: claim.userId,
+          title: status === ClaimStatus.APPROVED ? "Revendication approuvée !" : "Demande de revendication refusée",
+          body:
+            status === ClaimStatus.APPROVED
+              ? `Votre demande de revendication pour le podcast « ${claim.podcast.name} » a été validée. Vous en êtes désormais le propriétaire officiel.`
+              : `Votre demande pour « ${claim.podcast.name} » a été refusée.${reviewNotes ? ` Motif : ${reviewNotes}` : ""}`,
+          link: status === ClaimStatus.APPROVED ? "/studio" : "/claims",
+          type: status === ClaimStatus.APPROVED ? "CLAIM_APPROVED" : "CLAIM_REJECTED",
+        },
+      });
 
       await AuditService.logAction({
         actorId: adminUserId,

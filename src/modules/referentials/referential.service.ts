@@ -1,8 +1,20 @@
 import { prisma } from "../../config/prisma.js";
 
 export class ReferentialService {
-  static async getCategories() {
+  static async getCategories(hasContentOnly = false) {
     return prisma.category.findMany({
+      where: hasContentOnly
+        ? {
+            podcasts: {
+              some: {
+                podcast: {
+                  status: "PUBLISHED",
+                  episodes: { some: { status: "PUBLISHED" } },
+                },
+              },
+            },
+          }
+        : undefined,
       include: { _count: { select: { podcasts: true } } },
     });
   }
@@ -26,8 +38,33 @@ export class ReferentialService {
     });
   }
 
-  static async getTopics() {
+  static async getTopics(hasContentOnly = false) {
     return prisma.topic.findMany({
+      where: hasContentOnly
+        ? {
+            OR: [
+              {
+                podcasts: {
+                  some: {
+                    podcast: {
+                      status: "PUBLISHED",
+                      episodes: { some: { status: "PUBLISHED" } },
+                    },
+                  },
+                },
+              },
+              {
+                episodes: {
+                  some: {
+                    episode: {
+                      status: "PUBLISHED",
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : undefined,
       include: {
         aliases: true,
         _count: { select: { podcasts: true, episodes: true } },
@@ -87,8 +124,32 @@ export class ReferentialService {
     });
   }
 
-  static async getLanguages() {
+  static async getLanguages(hasContentOnly = false) {
     return prisma.language.findMany({
+      where: hasContentOnly
+        ? {
+            OR: [
+              {
+                primaryPodcasts: {
+                  some: {
+                    status: "PUBLISHED",
+                    episodes: { some: { status: "PUBLISHED" } },
+                  },
+                },
+              },
+              {
+                secondaryPodcasts: {
+                  some: {
+                    podcast: {
+                      status: "PUBLISHED",
+                      episodes: { some: { status: "PUBLISHED" } },
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : undefined,
       include: { _count: { select: { primaryPodcasts: true } } },
     });
   }

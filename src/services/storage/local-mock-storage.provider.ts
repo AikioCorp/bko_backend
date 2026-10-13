@@ -10,7 +10,7 @@ import { pipeline } from "node:stream/promises";
 export class LocalMockStorageProvider implements StorageProvider {
   private root = resolve(process.cwd(), ".local-media");
   private tickets = new Map<string, {key:string;contentType:string;expires:number}>();
-  private base = process.env.LOCAL_API_BASE_URL || "http://localhost:8080/api/v1";
+  private base = process.env.LOCAL_API_BASE_URL || (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/+$/, "")}/api/v1` : "http://localhost:8080/api/v1");
   filePath(key:string):string {
     const path=resolve(this.root,key);
     if(!key || !path.startsWith(this.root+sep)) throw new Error("Invalid storage key");
@@ -22,12 +22,19 @@ export class LocalMockStorageProvider implements StorageProvider {
     this.tickets.set(token,{key:storageKey,contentType,expires:expiresAt.getTime()});
     return {storageKey,expiresAt,uploadUrl:`${this.base}/mock-storage/upload?token=${token}`};
   }
-  async receiveUpload(token:string,stream:Readable):Promise<void> {
+  async receiveUpload(token:string,stream:Readable|Buffer):Promise<void> {
     const ticket=this.tickets.get(token);
     if(!ticket || ticket.expires<Date.now()) throw new Error("Upload expired or invalid");
     this.tickets.delete(token);
     const path=this.filePath(ticket.key);const temporary=path+".partial-"+randomUUID();
     await mkdir(dirname(path),{recursive:true});
+    if (Buffer.isBuffer(stream)) {
+      if (stream.length === 0) throw new Error("Empty file");
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(temporary, stream);
+      await rename(temporary, path);
+      return;
+    }
     let size=0;
     const limit=new Transform({transform(chunk,encoding,callback){size+=chunk.length;callback(size>2000*1024*1024?new Error("File too large"):null,chunk);}});
     try { await pipeline(stream,limit,createWriteStream(temporary));if(size===0) throw new Error("Empty file");await rename(temporary,path); }

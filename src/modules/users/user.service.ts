@@ -58,10 +58,11 @@ export class UserService {
     };
   }
 
-  static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string }) {
+  static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string; bio?: string }) {
+    const { bio, ...userData } = data;
     const updated = await prisma.user.update({
       where: { id: userId },
-      data,
+      data: userData,
       select: {
         id: true,
         email: true,
@@ -70,6 +71,17 @@ export class UserService {
         avatar: true,
       },
     });
+
+    if (typeof bio === "string") {
+      const creator = await prisma.creatorProfile.findUnique({ where: { userId } });
+      if (creator) {
+        await prisma.creatorProfile.update({
+          where: { userId },
+          data: { bio: bio.trim() },
+        });
+      }
+    }
+
     return updated;
   }
 
