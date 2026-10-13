@@ -9,6 +9,12 @@ import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 
 export class CreatorController {
+  static async getStudioAccess(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      return sendSuccess(res, await CreatorProfileService.getStudioAccess(req.user.id));
+    } catch (error: any) { return creatorError(res, error); }
+  }
   // --- CREATOR PROFILE ---
   static async getProfile(req: AuthenticatedRequest, res: Response) {
     try {

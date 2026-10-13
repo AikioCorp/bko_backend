@@ -64,8 +64,10 @@ export class CreatorPodcastService {
       status?: PodcastStatus;
     }
   ) {
-    const countryCode = data.countryId || "ML";
     const creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId } });
+    if (!creatorProfile) throw new Error("CREATOR_PROFILE_REQUIRED");
+    const countryCode = data.countryId || creatorProfile.countryId;
+    if (!countryCode) throw new Error("CREATOR_COUNTRY_REQUIRED");
 
     // Validation Marché : Vérifier que la création de podcast est autorisée dans ce pays
     const isAllowed = await MarketService.checkCapability(
@@ -87,8 +89,8 @@ export class CreatorPodcastService {
       slug = `${slugBase}-${count}`;
     }
 
-    const initialStatus = data.status
-      ? data.status
+    const initialStatus = data.status === PodcastStatus.DRAFT
+      ? PodcastStatus.DRAFT
       : (await ContentReviewService.requiresReview(userId))
       ? PodcastStatus.PENDING_REVIEW
       : PodcastStatus.DRAFT;

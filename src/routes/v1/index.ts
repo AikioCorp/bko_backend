@@ -1,3 +1,4 @@
+import { requireStudioAccess } from "../../middlewares/studio.middleware.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
 import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
 import { EngagementController } from "../../modules/interactions/engagement.controller.js";
@@ -183,6 +184,8 @@ router.delete("/me/push-token", authenticateToken, NotificationController.unregi
 
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);
+router.use("/creator", authenticateToken, requireStudioAccess);
+router.get("/me/studio-access", authenticateToken, CreatorController.getStudioAccess);
 router.post("/creator/market-access-requests", authenticateToken, MarketController.requestBetaAccess);
 
 router.get("/admin/markets", authenticateToken, requirePermission("markets.view"), MarketController.getAdminMarkets);
@@ -204,7 +207,7 @@ router.post("/creator/episodes/:episodeId/chapters", authenticateToken, Transcri
 
 // --- BACKOFFICE ADMIN & CMS
 router.get("/admin/media", authenticateToken, requirePermission("catalog.view"), AdminMediaController.list);
-router.delete("/admin/media/:id", authenticateToken, requirePermission("catalog.delete"), AdminMediaController.remove); 
+router.delete("/admin/media/:id", authenticateToken, requirePermission("catalog.delete"), AdminMediaController.remove);
 router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
 router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
 router.get("/admin/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listAllEpisodes);
@@ -335,7 +338,7 @@ router.post("/reports", authenticateToken, accountLimiter(10), AdminConsoleContr
 router.post("/podcasts/:podcastId/claims", authenticateToken, ClaimController.submitClaim);
 router.get("/me/claims", authenticateToken, ClaimController.getUserClaims);
 
-// --- COLLECTIONS 
+// --- COLLECTIONS
 router.get("/collections", CollectionController.listCollections);
 router.get("/collections/:slug", CollectionController.getCollectionBySlug);
 router.post("/admin/collections", authenticateToken, requirePermission("catalog.edit"), CollectionController.createCollection);

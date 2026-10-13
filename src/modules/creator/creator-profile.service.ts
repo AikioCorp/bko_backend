@@ -13,6 +13,16 @@ export function slugify(text: string): string {
 }
 
 export class CreatorProfileService {
+  static async getStudioAccess(userId: string) {
+    const [profile, membership, roles] = await Promise.all([
+      prisma.creatorProfile.findUnique({ where: { userId } }),
+      prisma.podcastMember.findFirst({ where: { userId }, select: { id: true } }),
+      prisma.userRole.findMany({ where: { userId }, include: { role: true } }),
+    ]);
+    const staff = roles.some(({ role }) => ["ADMIN", "SUPER_ADMIN", "EDITOR"].includes(role.name));
+    return { canAccess: Boolean(profile || membership || staff), canCreatePodcast: Boolean(profile),
+      creatorProfile: profile, isCollaborator: Boolean(membership), isStaff: staff };
+  }
   static async getProfile(userId: string) {
     const profile = await prisma.creatorProfile.findUnique({
       where: { userId },
@@ -38,73 +48,100 @@ export class CreatorProfileService {
       createPerson?: boolean;
     }
   ) {
-    const existing = await prisma.creatorProfile.findUnique({ where: { userId } });
-    if (existing) throw new Error("CREATOR_PROFILE_EXISTS");
-
-    let slugBase = slugify(data.displayName);
-    let slug = slugBase;
-    let count = 1;
-
-    while (await prisma.creatorProfile.findUnique({ where: { slug } })) {
-      count++;
-      slug = `${slugBase}-${count}`;
+    if (!data || typeof data.displayName !== "string" || !data.displayName.trim() || data.displayName.trim().length > 100) {
+      throw new Error("INVALID_CREATOR_NAME");
     }
+    data = { ...data, displayName: data.displayName.trim() };
+    if (data.bio !== undefined && (typeof data.bio !== "string" || data.bio.length > 2000)) {
+      throw new Error("INVALID_CREATOR_BIO");
+    }
+    if (data.website) {
+      try {
+        const url = new URL(data.website);
+        if (!["https:", "http:"].includes(url.protocol)) throw new Error();
+      } catch { throw new Error("INVALID_URL"); }
+    }
+    return prisma.$transaction(async (tx) => {
+      // Serialize activation for this account (double tap or retry after network loss).
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      const existing = await tx.creatorProfile.findUnique({ where: { userId } });
 
-    let linkedPersonId = data.personId;
 
-    // Si demandé, créer automatiquement la fiche Person rattachée
-    if (data.createPerson && !linkedPersonId) {
-      let personSlugBase = slugify(data.displayName);
-      let personSlug = personSlugBase;
-      let pCount = 1;
-      while (await prisma.person.findUnique({ where: { slug: personSlug } })) {
-        pCount++;
-        personSlug = `${personSlugBase}-${pCount}`;
+      if (existing) {
+        const role = await tx.role.findUnique({ where: { name: "CREATOR" } });
+        if (!role) throw new Error("CREATOR_ROLE_UNAVAILABLE");
+        await tx.userRole.upsert({
+          where: { userId_roleId: { userId, roleId: role.id } },
+          create: { userId, roleId: role.id }, update: {},
+        });
+        return existing;
+      }
+      let slugBase = slugify(data.displayName) || "createur";
+      let slug = slugBase;
+      let count = 1;
+
+      while (await tx.creatorProfile.findUnique({ where: { slug } })) {
+        count++;
+        slug = `${slugBase}-${count}`;
       }
 
-      const person = await prisma.person.create({
+      let linkedPersonId = data.personId;
+
+      // Si demandé, créer automatiquement la fiche Person rattachée
+      if (data.createPerson && !linkedPersonId) {
+        let personSlugBase = slugify(data.displayName) || "createur";
+        let personSlug = personSlugBase;
+        let pCount = 1;
+        while (await tx.person.findUnique({ where: { slug: personSlug } })) {
+          pCount++;
+          personSlug = `${personSlugBase}-${pCount}`;
+        }
+
+        const person = await tx.person.create({
+          data: {
+            name: data.displayName,
+            slug: personSlug,
+            bio: data.bio,
+            photo: data.avatar,
+            countryId: data.countryId,
+            website: data.website,
+            socialLinks: data.socialLinks,
+          },
+        });
+        linkedPersonId = person.id;
+      }
+
+      const creator = await tx.creatorProfile.create({
         data: {
-          name: data.displayName,
-          slug: personSlug,
+          userId,
+          displayName: data.displayName,
+          slug,
           bio: data.bio,
-          photo: data.avatar,
+          avatar: data.avatar,
+          banner: data.banner,
           countryId: data.countryId,
           website: data.website,
           socialLinks: data.socialLinks,
+          personId: linkedPersonId,
+        },
+        include: {
+          person: true,
+          country: true,
         },
       });
-      linkedPersonId = person.id;
-    }
 
-    const creator = await prisma.creatorProfile.create({
-      data: {
-        userId,
-        displayName: data.displayName,
-        slug,
-        bio: data.bio,
-        avatar: data.avatar,
-        banner: data.banner,
-        countryId: data.countryId,
-        website: data.website,
-        socialLinks: data.socialLinks,
-        personId: linkedPersonId,
-      },
-      include: {
-        person: true,
-        country: true,
-      },
-    });
+      const creatorRole = await tx.role.findUnique({ where: { name: "CREATOR" } });
+      if (!creatorRole) throw new Error("CREATOR_ROLE_UNAVAILABLE");
+      if (creatorRole) {
+        await tx.userRole.upsert({
+          where: { userId_roleId: { userId, roleId: creatorRole.id } },
+          create: { userId, roleId: creatorRole.id },
+          update: {},
+        });
+      }
 
-    const creatorRole = await prisma.role.findUnique({ where: { name: "CREATOR" } });
-    if (creatorRole) {
-      await prisma.userRole.upsert({
-        where: { userId_roleId: { userId, roleId: creatorRole.id } },
-        create: { userId, roleId: creatorRole.id },
-        update: {},
+      return creator;
       });
-    }
-
-    return creator;
   }
 
   static async updateProfile(

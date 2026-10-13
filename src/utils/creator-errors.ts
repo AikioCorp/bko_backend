@@ -3,6 +3,11 @@ import { sendError } from "./response.js";
 
 // Erreurs métier du parcours créateur → statut HTTP + message lisible pour l'interface.
 const MAP: Record<string, [number, string]> = {
+  CREATOR_PROFILE_REQUIRED: [403, "Activez votre Studio avant de créer une émission."],
+  CREATOR_COUNTRY_REQUIRED: [400, "Choisissez le pays de votre émission."],
+  INVALID_CREATOR_BIO: [400, "La présentation doit contenir au maximum 2 000 caractères."],
+  INVALID_CREATOR_NAME: [400, "Indiquez un nom public entre 1 et 100 caractères."],
+  CREATOR_ROLE_UNAVAILABLE: [503, "L'activation du Studio est temporairement indisponible. Réessayez."],
   FORBIDDEN: [403, "Vous n'avez pas les droits nécessaires sur ce podcast"],
   FORBIDDEN_ONLY_OWNER: [403, "Seul le propriétaire peut effectuer cette action"],
   PODCAST_NOT_FOUND: [404, "Podcast introuvable"],

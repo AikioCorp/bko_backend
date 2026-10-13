@@ -7,6 +7,9 @@ export class ClaimController {
   static async submitClaim(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      if (typeof req.body.proofDescription !== "string" || req.body.proofDescription.trim().length < 10) {
+        return sendError(res, "Expliquez comment vérifier votre propriété (10 caractères minimum).", "VALIDATION_ERROR", 400);
+      }
       const claim = await ClaimService.submitClaim(req.user.id, {
         podcastId: req.params.podcastId,
         proofDescription: req.body.proofDescription,
