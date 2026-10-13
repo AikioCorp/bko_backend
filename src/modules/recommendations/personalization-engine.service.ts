@@ -308,8 +308,8 @@ export class PersonalizationEngineService {
       if (validItems.length > 0 || sec.sourceMode === "HYBRID") {
         const collectionSlug = validItems[0]?.collection?.slug;
         const targetUrl = collectionSlug
-          ? `/collections/${collectionSlug}`
-          : (sec.type === "PODCAST_ROW" ? "/explore?view=podcasts" : "/explore?view=episodes");
+          ? `/discovery/sections/${collectionSlug}`
+          : `/discovery/sections/${sec.slug || sec.id}`;
 
         const sectionItems = validItems.map((item, idx) => ({
           id: `item_ed_${item.id}`,
@@ -406,10 +406,8 @@ export class PersonalizationEngineService {
         reason: isPersonalized ? "Adapté à vos goûts" : "Sélection populaire",
         discoveryContext: {
           targetUrl: isFiltered
-            ? `/explore?view=episodes&category=${category}`
-            : isPersonalized
-            ? "/explore?view=episodes&strategy=for-you"
-            : "/explore?view=episodes&sort=popular",
+            ? `/discovery/sections/for-you?category=${category}`
+            : "/discovery/sections/for-you",
           view: "episodes",
           category: isFiltered ? category : undefined,
           sort: isPersonalized ? undefined : "popular",
@@ -442,7 +440,9 @@ export class PersonalizationEngineService {
         priority: 80,
         reason: "Découverte de séries",
         discoveryContext: {
-          targetUrl: isFiltered ? `/explore?view=podcasts&category=${category}` : "/explore?view=podcasts&sort=popular",
+          targetUrl: isFiltered
+            ? `/discovery/sections/discover-podcasts?category=${category}`
+            : "/discovery/sections/discover-podcasts",
           view: "podcasts",
           category: isFiltered ? category : undefined,
           sort: "popular",
@@ -473,7 +473,9 @@ export class PersonalizationEngineService {
         priority: 78,
         reason: "Nouveauté",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&sort=recent",
+          targetUrl: isFiltered
+            ? `/discovery/sections/new-episodes?category=${category}`
+            : "/discovery/sections/new-episodes",
           view: "episodes",
           sort: "recent",
           label: "Nouveaux épisodes",
@@ -504,7 +506,7 @@ export class PersonalizationEngineService {
         priority: 75,
         reason: "Populaire",
         discoveryContext: {
-          targetUrl: "/explore?view=podcasts&sort=popular",
+          targetUrl: "/discovery/sections/popular-now",
           view: "podcasts",
           sort: "popular",
           label: "Populaires en ce moment",
@@ -535,7 +537,7 @@ export class PersonalizationEngineService {
         priority: 72,
         reason: "Pour démarrer",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&sort=oldest",
+          targetUrl: "/discovery/sections/start-podcast",
           view: "episodes",
           sort: "oldest",
           label: "Pour commencer",
@@ -566,7 +568,7 @@ export class PersonalizationEngineService {
         priority: 70,
         reason: "Format court",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&duration=SHORT",
+          targetUrl: "/discovery/sections/short-episodes",
           view: "episodes",
           duration: "SHORT",
           label: "Moins de 20 minutes",
@@ -597,7 +599,7 @@ export class PersonalizationEngineService {
         priority: 68,
         reason: "Format long",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&duration=LONG",
+          targetUrl: "/discovery/sections/long-episodes",
           view: "episodes",
           duration: "LONG",
           label: "Formats longs (> 45 min)",
@@ -628,7 +630,7 @@ export class PersonalizationEngineService {
         priority: 65,
         reason: "Nouvelles voix",
         discoveryContext: {
-          targetUrl: "/explore?view=podcasts&sort=recent",
+          targetUrl: "/discovery/sections/voices-discover",
           view: "podcasts",
           sort: "recent",
           label: "Des voix à découvrir",
@@ -659,7 +661,7 @@ export class PersonalizationEngineService {
         priority: 62,
         reason: "Archives clés",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&sort=oldest",
+          targetUrl: "/discovery/sections/rediscover",
           view: "episodes",
           sort: "oldest",
           label: "À redécouvrir",
@@ -690,7 +692,7 @@ export class PersonalizationEngineService {
         priority: 60,
         reason: "Arrivées récentes",
         discoveryContext: {
-          targetUrl: "/explore?view=podcasts&sort=recent",
+          targetUrl: "/discovery/sections/new-podcasts",
           view: "podcasts",
           sort: "recent",
           label: "Nouvelles émissions",
@@ -724,7 +726,7 @@ export class PersonalizationEngineService {
         priority: 58,
         reason: targetLangName,
         discoveryContext: {
-          targetUrl: `/explore?view=episodes&lang=${targetLangCode}`,
+          targetUrl: `/discovery/sections/lang-selection?lang=${targetLangCode}`,
           view: "episodes",
           language: targetLangCode,
           label: `En ${targetLangName}`,
@@ -755,7 +757,7 @@ export class PersonalizationEngineService {
         priority: 55,
         reason: "Thématique phare",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&category=societe",
+          targetUrl: "/discovery/sections/topic-selection",
           view: "episodes",
           category: "societe",
           label: "Société & Culture",
@@ -786,7 +788,7 @@ export class PersonalizationEngineService {
         priority: 52,
         reason: "Interview & Débat",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&sort=popular",
+          targetUrl: "/discovery/sections/conversations-interviews",
           view: "episodes",
           sort: "popular",
           label: "Conversations et interviews",
@@ -817,7 +819,7 @@ export class PersonalizationEngineService {
         priority: 50,
         reason: "Publication régulière",
         discoveryContext: {
-          targetUrl: "/explore?view=podcasts&sort=recent",
+          targetUrl: "/discovery/sections/active-podcasts",
           view: "podcasts",
           sort: "recent",
           label: "Émissions régulières",
@@ -848,7 +850,7 @@ export class PersonalizationEngineService {
         priority: 48,
         reason: "Coup de cœur BKO",
         discoveryContext: {
-          targetUrl: "/explore?view=episodes&sort=popular",
+          targetUrl: "/discovery/sections/editorial-selection",
           view: "episodes",
           sort: "popular",
           label: "La sélection BKO",
@@ -2068,6 +2070,68 @@ export class PersonalizationEngineService {
             targetUrl: `/explore?view=${editorialSec.type === "PODCAST_ROW" ? "podcasts" : "episodes"}`,
             view: editorialSec.type === "PODCAST_ROW" ? "podcasts" : "episodes",
             label: editorialSec.title,
+          },
+        },
+        items,
+        pagination: {
+          offset,
+          limit,
+          total: validItems.length,
+          hasMore: offset + items.length < validItems.length,
+        },
+      };
+    }
+
+    // 19. Collection configurée en base (Prisma Collection)
+    const collection = await prisma.collection.findFirst({
+      where: {
+        OR: [{ id: sectionIdOrSlug }, { slug: sectionIdOrSlug }],
+      },
+      include: {
+        items: {
+          orderBy: { position: "asc" },
+          include: {
+            podcast: { include: podcastInclude },
+            episode: { include: episodeInclude },
+          },
+        },
+      },
+    });
+
+    if (collection) {
+      const validItems = collection.items.filter((item) => {
+        if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
+        if (item.episode && item.episode.status !== "PUBLISHED") return false;
+        return true;
+      });
+
+      const paginatedItems = validItems.slice(offset, offset + limit);
+      const items: RecommendationItemDto[] = paginatedItems.map((item, idx) => ({
+        id: `item_col_${item.id}`,
+        targetType: (item.podcast ? "PODCAST" : "EPISODE") as "PODCAST" | "EPISODE",
+        position: offset + idx,
+        reason: "Collection éditoriale",
+        attribution: { batchId, engineVersion: this.ENGINE_VERSION, variant, sectionSlug: collection.slug },
+        episode: item.episode || undefined,
+        podcast: item.podcast || undefined,
+      }));
+
+      const hasPodcasts = validItems.some((i) => !!i.podcast);
+      const hasEpisodes = validItems.some((i) => !!i.episode);
+      const inferredType = hasPodcasts && !hasEpisodes ? "PODCAST_ROW" : "EPISODE_ROW";
+
+      return {
+        section: {
+          id: collection.id,
+          slug: collection.slug,
+          title: collection.title,
+          subtitle: collection.description,
+          type: inferredType,
+          sourceMode: "MANUAL",
+          discoveryContext: {
+            targetUrl: `/discovery/sections/${collection.slug || collection.id}`,
+            view: inferredType === "PODCAST_ROW" ? "podcasts" : "episodes",
+            label: collection.title,
           },
         },
         items,

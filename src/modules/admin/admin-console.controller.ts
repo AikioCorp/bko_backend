@@ -16,6 +16,7 @@ const KNOWN: Record<string, [number, string]> = {
   ACTION_NOT_SUPPORTED_FOR_TARGET: [400, "Cette action n'est pas disponible pour ce type de cible"],
   CANNOT_DEMOTE_SELF: [400, "Vous ne pouvez pas retirer vos propres droits d'administration"],
   CANNOT_SUSPEND_SELF: [400, "Vous ne pouvez pas suspendre votre propre compte"],
+  CANNOT_DELETE_SELF: [400, "Vous ne pouvez pas supprimer votre propre compte depuis la console d'administration"],
   UNKNOWN_ROLE: [400, "Rôle inconnu"],
   UNKNOWN_PERMISSION: [400, "Permission inconnue"],
   INVALID_ROLE_NAME: [400, "Nom de rôle invalide (3 à 40 caractères : lettres, chiffres, _)"],
@@ -222,6 +223,14 @@ export class AdminConsoleController {
     try {
       const b = z.object({ suspended: z.boolean(), reason: z.string().max(500).optional() }).parse(req.body);
       return sendSuccess(res, await AdminRbacService.setUserSuspension(actor(req), idParam(req), b.suspended, b.reason, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async deleteUser(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminRbacService.deleteUser(actor(req), idParam(req), req.ip));
     } catch (e) {
       return fail(res, e);
     }

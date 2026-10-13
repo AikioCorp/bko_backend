@@ -23,17 +23,32 @@ ${body}${cta}
 </td></tr></table></td></tr></table></body></html>`;
 }
 
+import * as React from "react";
+import { render } from "@react-email/render";
+import { OtpEmail } from "./templates/OtpEmail.js";
+
 function text(title: string, paragraphs: string[], url?: string) {
   return [title, "", ...paragraphs, ...(url ? ["", url] : []), "", "— Bamako Podcast"].join("\n");
 }
 
 export const Emails = {
-  otp(to: string, code: string): Mail {
-    const paragraphs = [`Votre code de vérification est : ${code}`, "Il est valable 15 minutes. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email."];
+  async otp(to: string, code: string, userName?: string | null): Promise<Mail> {
+    const greeting = userName?.trim() ? `Bonjour ${userName.trim().split(" ")[0]},` : "Bonjour,";
+    const paragraphs = [
+      greeting,
+      `Votre code de vérification est : ${code}`,
+      "Il est valable 15 minutes. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.",
+    ];
+    let htmlContent: string;
+    try {
+      htmlContent = await render(React.createElement(OtpEmail, { code, userName }));
+    } catch {
+      htmlContent = layout({ preheader: `Code ${code}`, title: "Vérifiez votre compte", paragraphs });
+    }
     return {
       to,
-      subject: `Votre code de vérification : ${code}`,
-      html: layout({ preheader: `Code ${code}`, title: "Vérifiez votre compte", paragraphs }),
+      subject: `${code} est votre code de vérification Bamako Podcast`,
+      html: htmlContent,
       text: text("Vérifiez votre compte", paragraphs),
     };
   },

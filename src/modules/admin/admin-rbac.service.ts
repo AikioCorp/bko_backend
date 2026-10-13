@@ -198,13 +198,13 @@ export class AdminRbacService {
     const target = await prisma.user.findUnique({ where: { id: userId } });
     if (!target) throw new Error("NOT_FOUND");
     await this.assertCanActOn(access, userId);
-    if (suspended && !reason?.trim()) throw new Error("REASON_REQUIRED");
+    const finalReason = suspended ? (reason?.trim() || "Compte suspendu par l'administration") : null;
 
     await prisma.$transaction([
       prisma.user.update({
         where: { id: userId },
         data: suspended
-          ? { isSuspended: true, suspendedAt: new Date(), suspendedReason: reason!.trim() }
+          ? { isSuspended: true, suspendedAt: new Date(), suspendedReason: finalReason }
           : { isSuspended: false, suspendedAt: null, suspendedReason: null },
       }),
       ...(suspended
@@ -217,9 +217,89 @@ export class AdminRbacService {
       action: suspended ? "USER_SUSPENDED" : "USER_REACTIVATED",
       entityType: "User",
       entityId: userId,
-      newState: { suspended, reason },
+      newState: { suspended, reason: finalReason },
       ipAddress: ip,
     });
-    return { userId, isSuspended: suspended };
+    return { userId, isSuspended: suspended, suspendedReason: finalReason };
+  }
+
+  static async deleteUser(actor: Actor, userId: string, ip?: string) {
+    if (actor.id === userId) throw new Error("CANNOT_DELETE_SELF");
+    const access = await PermissionService.getAccess(actor.id);
+    const target = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        userRoles: { include: { role: true } },
+      },
+    });
+    if (!target) throw new Error("NOT_FOUND");
+    await this.assertCanActOn(access, userId);
+
+    const targetIsSuper = target.userRoles.some((ur) => ur.role.name.toUpperCase() === SUPER_ADMIN_ROLE);
+    if (targetIsSuper && !access.isSuper) {
+      throw new Error("FORBIDDEN");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Révocation immédiate des sessions et tokens
+      await tx.refreshToken.deleteMany({ where: { userId } });
+      await tx.session.deleteMany({ where: { userId } });
+
+      // 2. Dissociation des uploads orphelins
+      await tx.mediaAsset.updateMany({
+        where: { uploaderId: userId },
+        data: { uploaderId: null },
+      });
+
+      // 3. Dissociation des médias possédés
+      const ownedAssets = await tx.mediaAsset.findMany({
+        where: { ownerId: userId },
+        select: { id: true },
+      });
+      if (ownedAssets.length > 0) {
+        const assetIds = ownedAssets.map((a) => a.id);
+        await tx.mediaSource.updateMany({
+          where: { mediaAssetId: { in: assetIds } },
+          data: { mediaAssetId: null },
+        });
+        await tx.uploadSession.updateMany({
+          where: { mediaAssetId: { in: assetIds } },
+          data: { mediaAssetId: null },
+        });
+        await tx.mediaAsset.deleteMany({
+          where: { ownerId: userId },
+        });
+      }
+
+      // 4. Détachement dans l'historique d'audit
+      await tx.auditLog.updateMany({
+        where: { actorId: userId },
+        data: { actorId: null },
+      });
+
+      // 5. Détachement dans les signalements soumis
+      await tx.report.updateMany({
+        where: { reporterId: userId },
+        data: { reporterId: null },
+      });
+
+      // 6. Suppression définitive de l'utilisateur (onDelete Cascade pour les profils, favoris, etc.)
+      await tx.user.delete({
+        where: { id: userId },
+      });
+    });
+
+    PermissionService.invalidate(userId);
+
+    await AuditService.logAction({
+      actorId: actor.id,
+      action: "USER_DELETED",
+      entityType: "User",
+      entityId: userId,
+      previousState: { email: target.email, fullName: target.fullName },
+      ipAddress: ip,
+    });
+
+    return { userId, deleted: true };
   }
 }

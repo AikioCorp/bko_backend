@@ -54,7 +54,7 @@ export class AuthService {
       });
 
       if (!isTestMode) {
-        void MailService.sendNow(Emails.otp(existingUser.email, otpCode));
+        void MailService.sendNow(Emails.otp(existingUser.email, otpCode, existingUser.fullName));
       }
 
       return {
@@ -89,7 +89,7 @@ export class AuthService {
     });
 
     if (!isTestMode) {
-      void MailService.sendNow(Emails.otp(email, otpCode));
+      void MailService.sendNow(Emails.otp(email, otpCode, fullName));
     }
 
     return {
@@ -163,7 +163,7 @@ export class AuthService {
     });
 
     if (!isTestMode) {
-      void MailService.sendNow(Emails.otp(user.email, otpCode));
+      void MailService.sendNow(Emails.otp(user.email, otpCode, user.fullName));
     }
 
     return {

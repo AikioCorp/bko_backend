@@ -265,6 +265,7 @@ router.patch("/admin/reports/:id", authenticateToken, requirePermission("moderat
 router.get("/admin/users", authenticateToken, requirePermission("users.view"), AdminConsoleController.listUsers);
 router.put("/admin/users/:id/roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserRoles);
 router.post("/admin/users/:id/suspension", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserSuspension);
+router.delete("/admin/users/:id", authenticateToken, requirePermission("users.delete"), AdminConsoleController.deleteUser);
 router.post("/admin/users/:id/creator-verification", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setCreatorVerification);
 router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
 router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);

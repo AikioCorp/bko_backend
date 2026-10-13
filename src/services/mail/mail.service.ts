@@ -43,7 +43,8 @@ export class MailService {
   }
 
   /** Remise réelle ; lève une erreur en cas d'échec (utilisée par le worker pour réessayer). */
-  static async deliver(mail: Mail): Promise<void> {
+  static async deliver(mailInput: Mail | Promise<Mail>): Promise<void> {
+    const mail = await mailInput;
     if (!EMAIL_RE.test(mail.to)) throw new Error(`Adresse email invalide : ${mail.to}`);
     const message = { from: this.from, to: mail.to, subject: clean(mail.subject), html: mail.html, text: mail.text };
 
@@ -58,7 +59,10 @@ export class MailService {
           body: JSON.stringify({ from: message.from, to: [message.to], subject: message.subject, html: message.html, text: message.text }),
           signal: AbortSignal.timeout(10000),
         });
-        if (!res.ok) throw new Error(`Resend HTTP ${res.status}`);
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => "");
+          throw new Error(`Resend HTTP ${res.status}: ${errBody}`);
+        }
         return;
       }
       default:
@@ -74,12 +78,12 @@ export class MailService {
    * Envoi immédiat pour les emails portant un secret (OTP, réinitialisation, invitation) :
    * rien n'est écrit en base. N'échoue jamais pour l'appelant ; renvoie false en cas d'échec.
    */
-  static async sendNow(mail: Mail): Promise<boolean> {
+  static async sendNow(mailInput: Mail | Promise<Mail>): Promise<boolean> {
     try {
-      await this.deliver(mail);
+      await this.deliver(mailInput);
       return true;
     } catch (e: any) {
-      console.error(`[mail] échec d'envoi à ${mail.to} :`, e.message);
+      console.error(`[mail] échec d'envoi :`, e.message);
       return false;
     }
   }

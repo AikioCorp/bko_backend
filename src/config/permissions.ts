@@ -17,7 +17,7 @@ export const FEATURES: Feature[] = [
   { key: "reviews", label: "Validation des contenus", description: "Valider ou refuser les contenus soumis par les créateurs", caps: ["view", "edit"] },
   { key: "moderation", label: "Modération & signalements", description: "Traiter les signalements, retirer un contenu", caps: ["view", "edit"] },
   { key: "claims", label: "Revendications", description: "Examiner les demandes de propriété de podcast", caps: ["view", "edit"] },
-  { key: "users", label: "Créateurs & utilisateurs", description: "Comptes : consulter, suspendre, attribuer des rôles, créateur de confiance", caps: ["view", "edit"] },
+  { key: "users", label: "Créateurs & utilisateurs", description: "Comptes : consulter, bloquer, suspendre, supprimer, attribuer des rôles, créateur de confiance", caps: ["view", "edit", "delete"] },
   { key: "roles", label: "Rôles & permissions", description: "Créer et configurer les rôles de la console", caps: ["view", "create", "edit", "delete"] },
   { key: "markets", label: "Marchés", description: "Ouverture des pays, accès des créateurs", caps: ["view", "edit"] },
   { key: "storage", label: "Stockage & tâches", description: "Stockage média, file de traitement, relance des tâches", caps: ["view", "edit"] },
