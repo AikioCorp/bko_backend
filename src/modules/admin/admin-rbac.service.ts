@@ -1,8 +1,14 @@
+import crypto from "crypto";
+import bcrypt from "bcrypt";
 import { prisma } from "../../config/prisma.js";
 import { AuditService } from "../../services/audit.service.js";
 import { NotificationService } from "../../services/notification.service.js";
 import { Access, PermissionService } from "../../services/permission.service.js";
 import { FEATURES, ROLE_TEMPLATES, SUPER_ADMIN_ROLE, isValidPermission } from "../../config/permissions.js";
+import { MailService } from "../../services/mail/mail.service.js";
+import { Emails } from "../../services/mail/email-templates.js";
+import { hashToken } from "../auth/auth.service.js";
+import { invalidateAccountStatusCache } from "../../middlewares/auth.middleware.js";
 
 export interface Actor {
   id: string;
@@ -212,6 +218,7 @@ export class AdminRbacService {
         : []),
     ]);
     PermissionService.invalidate(userId);
+    invalidateAccountStatusCache(userId);
     await AuditService.logAction({
       actorId: actor.id,
       action: suspended ? "USER_SUSPENDED" : "USER_REACTIVATED",
@@ -301,5 +308,219 @@ export class AdminRbacService {
     });
 
     return { userId, deleted: true };
+  }
+
+  static async updateUser(
+    actor: Actor,
+    userId: string,
+    data: {
+      fullName?: string;
+      email?: string;
+      phoneNumber?: string | null;
+      username?: string | null;
+      isVerified?: boolean;
+    },
+    ip?: string
+  ) {
+    const access = await PermissionService.getAccess(actor.id);
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new Error("USER_NOT_FOUND");
+    await this.assertCanActOn(access, userId);
+
+    const updatePayload: any = {};
+    if (data.fullName !== undefined) {
+      const cleanName = data.fullName.trim();
+      if (!cleanName) throw new Error("FULLNAME_REQUIRED");
+      updatePayload.fullName = cleanName;
+    }
+
+    if (data.email !== undefined) {
+      const cleanEmail = data.email.trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("INVALID_EMAIL");
+      if (cleanEmail !== target.email.toLowerCase()) {
+        const existing = await prisma.user.findFirst({
+          where: { email: { equals: cleanEmail, mode: "insensitive" }, id: { not: userId } },
+        });
+        if (existing) throw new Error("EMAIL_ALREADY_EXISTS");
+        updatePayload.email = cleanEmail;
+      }
+    }
+
+    if (data.phoneNumber !== undefined) {
+      const cleanPhone = data.phoneNumber?.trim() || null;
+      if (cleanPhone && cleanPhone !== target.phoneNumber) {
+        const existingPhone = await prisma.user.findFirst({
+          where: { phoneNumber: cleanPhone, id: { not: userId } },
+        });
+        if (existingPhone) throw new Error("PHONE_ALREADY_EXISTS");
+      }
+      updatePayload.phoneNumber = cleanPhone;
+    }
+
+    if (data.username !== undefined) {
+      const cleanUsername = data.username?.trim().toLowerCase() || null;
+      if (cleanUsername && cleanUsername !== target.username?.toLowerCase()) {
+        const existingUsername = await prisma.user.findFirst({
+          where: { username: { equals: cleanUsername, mode: "insensitive" }, id: { not: userId } },
+        });
+        if (existingUsername) throw new Error("USERNAME_ALREADY_EXISTS");
+      }
+      updatePayload.username = cleanUsername;
+    }
+
+    if (data.isVerified !== undefined) {
+      updatePayload.isVerified = Boolean(data.isVerified);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: updatePayload,
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        username: true,
+        phoneNumber: true,
+        isVerified: true,
+        isSuspended: true,
+        updatedAt: true,
+      },
+    });
+
+    await AuditService.logAction({
+      actorId: actor.id,
+      action: "USER_UPDATED",
+      entityType: "User",
+      entityId: userId,
+      previousState: {
+        fullName: target.fullName,
+        email: target.email,
+        phoneNumber: target.phoneNumber,
+        username: target.username,
+        isVerified: target.isVerified,
+      },
+      newState: updatePayload,
+      ipAddress: ip,
+    });
+
+    return updatedUser;
+  }
+
+  static async adminResetPassword(
+    actor: Actor,
+    userId: string,
+    params: {
+      mode: "DIRECT" | "GENERATE" | "SEND_EMAIL";
+      password?: string;
+      revokeSessions?: boolean;
+      notifyUser?: boolean;
+    },
+    ip?: string
+  ) {
+    const access = await PermissionService.getAccess(actor.id);
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) throw new Error("USER_NOT_FOUND");
+    await this.assertCanActOn(access, userId);
+
+    const revokeSessions = params.revokeSessions !== false; // true par défaut
+    const notifyUser = params.notifyUser !== false; // true par défaut
+
+    if (params.mode === "SEND_EMAIL") {
+      // Générer OTP 6 chiffres + enregistrer hash + envoyer email
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordResetToken: hashToken(otpCode),
+          passwordResetExpiresAt: expiresAt,
+        },
+      });
+
+      void MailService.sendNow(await Emails.resetPassword(target.email, otpCode, target.fullName));
+
+      await AuditService.logAction({
+        actorId: actor.id,
+        action: "USER_PASSWORD_RESET_LINK_SENT",
+        entityType: "User",
+        entityId: userId,
+        ipAddress: ip,
+      });
+
+      return {
+        success: true,
+        mode: "SEND_EMAIL",
+        message: `Un code OTP et un lien de réinitialisation ont été envoyés à ${target.email}.`,
+      };
+    }
+
+    let rawPassword = "";
+    if (params.mode === "GENERATE") {
+      const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
+      let pwd = "";
+      for (let i = 0; i < 12; i++) {
+        pwd += chars.charAt(crypto.randomInt(0, chars.length));
+      }
+      rawPassword = `Bko#${pwd}`;
+    } else if (params.mode === "DIRECT") {
+      rawPassword = String(params.password || "");
+      if (rawPassword.length < 8 || rawPassword.length > 72) {
+        throw new Error("PASSWORD_INVALID_LENGTH");
+      }
+    } else {
+      throw new Error("INVALID_RESET_MODE");
+    }
+
+    const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash,
+          passwordResetToken: null,
+          passwordResetExpiresAt: null,
+          isVerified: true,
+        },
+      }),
+      ...(revokeSessions
+        ? [
+            prisma.refreshToken.updateMany({ where: { userId }, data: { isRevoked: true } }),
+            prisma.session.deleteMany({ where: { userId } }),
+          ]
+        : []),
+    ]);
+
+    if (notifyUser) {
+      await NotificationService.notify(
+        [userId],
+        {
+          type: "PASSWORD_CHANGED",
+          title: "Votre mot de passe a été réinitialisé",
+          body: "Votre mot de passe a été réinitialisé par un administrateur. Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement le support.",
+        },
+        { email: true }
+      );
+    }
+
+    await AuditService.logAction({
+      actorId: actor.id,
+      action: "USER_PASSWORD_RESET",
+      entityType: "User",
+      entityId: userId,
+      newState: { mode: params.mode, revokeSessions, notifyUser },
+      ipAddress: ip,
+    });
+
+    return {
+      success: true,
+      mode: params.mode,
+      generatedPassword: params.mode === "GENERATE" ? rawPassword : undefined,
+      message: params.mode === "GENERATE"
+        ? "Mot de passe généré et appliqué avec succès."
+        : "Nouveau mot de passe enregistré avec succès.",
+      revokedSessions: revokeSessions,
+    };
   }
 }

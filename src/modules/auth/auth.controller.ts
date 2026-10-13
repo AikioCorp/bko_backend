@@ -40,17 +40,43 @@ export class AuthController {
     }
   }
 
+  static async verifyResetOtp(req: Request, res: Response) {
+    try {
+      const email = String(req.body?.email ?? "").trim();
+      const otpCode = String(req.body?.otpCode ?? "").trim();
+      if (!email || !otpCode) {
+        return sendError(res, "Email et code OTP requis", "VALIDATION_ERROR", 400);
+      }
+      const result = await AuthService.verifyResetOtp(email, otpCode);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      if (error.message === "RESET_CODE_INVALID") {
+        return sendError(res, "Code de réinitialisation incorrect ou expiré", "RESET_CODE_INVALID", 400);
+      }
+      return sendError(res, "Code de vérification invalide", "VALIDATION_ERROR", 400);
+    }
+  }
+
   static async resetPassword(req: Request, res: Response) {
     try {
-      const token = String(req.body?.token ?? "");
+      const token = req.body?.token ? String(req.body.token) : undefined;
+      const email = req.body?.email ? String(req.body.email).trim() : undefined;
+      const otpCode = req.body?.otpCode ? String(req.body.otpCode).trim() : undefined;
       const password = String(req.body?.password ?? "");
-      if (token.length < 20 || token.length > 200) return sendError(res, "Lien invalide ou expiré", "RESET_TOKEN_INVALID", 400);
+
+      if (!token && (!email || !otpCode)) {
+        return sendError(res, "Code OTP ou lien de réinitialisation requis", "VALIDATION_ERROR", 400);
+      }
       if (password.length < 8 || password.length > 72) {
         return sendError(res, "Le mot de passe doit contenir entre 8 et 72 caractères", "VALIDATION_ERROR", 400);
       }
-      return sendSuccess(res, await AuthService.resetPassword(token, password));
+
+      const result = await AuthService.resetPassword({ token, email, otpCode, password });
+      return sendSuccess(res, result);
     } catch (error: any) {
-      if (error.message === "RESET_TOKEN_INVALID") return sendError(res, "Lien invalide ou expiré", "RESET_TOKEN_INVALID", 400);
+      if (error.message === "RESET_TOKEN_INVALID" || error.message === "RESET_CODE_INVALID") {
+        return sendError(res, "Code ou lien invalide ou expiré", "RESET_TOKEN_INVALID", 400);
+      }
       console.error("[auth] resetPassword", error);
       return sendError(res, "Une erreur inattendue est survenue.");
     }
@@ -96,6 +122,9 @@ export class AuthController {
 
       return sendSuccess(res, result);
     } catch (error: any) {
+      if (error.code === "ACCOUNT_SUSPENDED" || error.name === "AccountSuspendedError") {
+        return sendError(res, error.message || "Votre compte a été suspendu.", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
       if (error.message === "RESET_TOKEN_EXPIRED") {
         return sendError(res, "Le code de vérification a expiré", "OTP_EXPIRED", 400);
       }
@@ -129,6 +158,9 @@ export class AuthController {
 
       return sendSuccess(res, result);
     } catch (error: any) {
+      if (error.code === "ACCOUNT_SUSPENDED" || error.name === "AccountSuspendedError") {
+        return sendError(res, error.message || "Votre compte a été suspendu.", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
       if (error.message === "ACCOUNT_NOT_VERIFIED") {
         return sendError(res, "Compte non vérifié. Veuillez confirmer le code OTP envoyé.", "ACCOUNT_NOT_VERIFIED", 403);
       }
@@ -154,6 +186,9 @@ export class AuthController {
 
       return sendSuccess(res, result);
     } catch (error: any) {
+      if (error.code === "ACCOUNT_SUSPENDED" || error.name === "AccountSuspendedError") {
+        return sendError(res, error.message || "Votre compte a été suspendu.", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
       return sendError(res, "Refresh token invalide ou expiré", "INVALID_REFRESH_TOKEN", 401);
     }
   }
@@ -207,10 +242,70 @@ export class AuthController {
       return sendSuccess(res, result);
     } catch (error: any) {
       console.error("[auth] Erreur Google Login:", error.message);
-      if (error.message === "ACCOUNT_SUSPENDED") {
-        return sendError(res, "Ce compte a été suspendu par l'administration", "ACCOUNT_SUSPENDED", 403);
+      if (error.code === "ACCOUNT_SUSPENDED" || error.message === "ACCOUNT_SUSPENDED") {
+        return sendError(res, error.message || "Ce compte a été suspendu par l'administration", "ACCOUNT_SUSPENDED", 403, error.details);
       }
       return sendError(res, error.message || "Échec de l'authentification Google", "GOOGLE_AUTH_ERROR", 401);
+    }
+  }
+
+  static async requestOtpLogin(req: Request, res: Response) {
+    try {
+      const identifier = String(req.body?.identifier || req.body?.email || "").trim();
+      if (!identifier) {
+        return sendError(res, "Adresse email ou numéro de téléphone requis", "VALIDATION_ERROR", 400);
+      }
+      const result = await AuthService.requestOtpLogin(identifier);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      if (error.code === "ACCOUNT_SUSPENDED" || error.message === "ACCOUNT_SUSPENDED") {
+        return sendError(res, error.message || "Ce compte est suspendu", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
+      if (error.message === "USER_NOT_FOUND") {
+        return sendError(res, "Aucun compte associé à cet identifiant", "USER_NOT_FOUND", 404);
+      }
+      return sendError(res, error.message || "Erreur lors de l'envoi du code de connexion");
+    }
+  }
+
+  static async verifyOtpLogin(req: Request, res: Response) {
+    try {
+      const identifier = String(req.body?.identifier || req.body?.email || "").trim();
+      const otpCode = String(req.body?.otpCode || req.body?.code || "").trim();
+      const { deviceType, deviceName } = req.body;
+
+      if (!identifier || !otpCode) {
+        return sendError(res, "Identifiant et code de vérification requis", "VALIDATION_ERROR", 400);
+      }
+
+      const result = await AuthService.verifyOtpLogin({
+        identifier,
+        otpCode,
+        deviceType,
+        deviceName,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      if (error.code === "ACCOUNT_SUSPENDED" || error.message === "ACCOUNT_SUSPENDED") {
+        return sendError(res, error.message || "Ce compte est suspendu", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
+      if (error.message === "INVALID_CREDENTIALS") {
+        return sendError(res, "Code de vérification invalide ou expiré", "INVALID_CREDENTIALS", 400);
+      }
+      if (error.message === "RESET_TOKEN_EXPIRED") {
+        return sendError(res, "Ce code de vérification a expiré", "RESET_TOKEN_EXPIRED", 400);
+      }
+      return sendError(res, error.message || "Erreur lors de la connexion");
     }
   }
 }

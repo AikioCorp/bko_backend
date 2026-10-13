@@ -137,31 +137,135 @@ export class AdminCatalogService {
     });
   }
 
-  static async listAllEpisodes(skip = 0, take = 50, search = "") {
+  static async listAllEpisodes(
+    skip = 0,
+    take = 50,
+    search = "",
+    status = "",
+    sortBy = "newest",
+    podcastId = ""
+  ) {
     const cleanSearch = search ? search.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
-      const slugSearch = cleanSearch.toLowerCase().replace(/['’\s]+/g, '-');
-      const where = search ? {
-        OR: [
-          { title: { contains: search, mode: 'insensitive' as const } },
-          { slug: { contains: slugSearch, mode: 'insensitive' as const } },
-          { podcast: { name: { contains: search, mode: 'insensitive' as const } } },
-          { podcast: { slug: { contains: slugSearch, mode: 'insensitive' as const } } }
-        ]
-      } : {};
-    const [data, total] = await Promise.all([
+    const slugSearch = cleanSearch.toLowerCase().replace(/['’\s]+/g, "-");
+
+    const where: any = {};
+
+    if (search && search.trim()) {
+      where.OR = [
+        { title: { contains: search.trim(), mode: "insensitive" as const } },
+        { slug: { contains: slugSearch, mode: "insensitive" as const } },
+        { podcast: { name: { contains: search.trim(), mode: "insensitive" as const } } },
+        { podcast: { slug: { contains: slugSearch, mode: "insensitive" as const } } },
+      ];
+    }
+
+    if (status && status.trim()) {
+      where.status = status.trim();
+    }
+
+    if (podcastId && podcastId.trim()) {
+      where.podcastId = podcastId.trim();
+    }
+
+    let orderBy: any = { createdAt: "desc" };
+    switch (sortBy) {
+      case "oldest":
+        orderBy = { createdAt: "asc" };
+        break;
+      case "most_listened":
+        orderBy = { histories: { _count: "desc" } };
+        break;
+      case "most_saved":
+        orderBy = { savedBy: { _count: "desc" } };
+        break;
+      case "duration_desc":
+        orderBy = { durationSeconds: "desc" };
+        break;
+      case "duration_asc":
+        orderBy = { durationSeconds: "asc" };
+        break;
+      case "newest":
+      default:
+        orderBy = { createdAt: "desc" };
+        break;
+    }
+
+    const [data, total, statusCounts, podcasts] = await Promise.all([
       prisma.episode.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take,
         include: {
-          podcast: { select: { name: true, slug: true, cover: true } },
-          _count: { select: { histories: true } }
-        }
+          podcast: { select: { id: true, name: true, slug: true, cover: true } },
+          _count: { select: { histories: true, savedBy: true } },
+        },
       }),
-      prisma.episode.count({ where })
+      prisma.episode.count({ where }),
+      prisma.episode.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      }),
+      prisma.podcast.findMany({
+        select: { id: true, name: true, slug: true },
+        orderBy: { name: "asc" },
+      }),
     ]);
-    return { data, total };
+
+    const counts: Record<string, number> = {
+      ALL: 0,
+      PUBLISHED: 0,
+      DRAFT: 0,
+      SCHEDULED: 0,
+      PENDING_REVIEW: 0,
+      ARCHIVED: 0,
+    };
+
+    let grandTotal = 0;
+    for (const sc of statusCounts) {
+      counts[sc.status] = sc._count.id;
+      grandTotal += sc._count.id;
+    }
+    counts.ALL = grandTotal;
+
+    const episodeIds = data.map((ep) => ep.id);
+    const [dailyStatsAgg, sessionAgg] = await Promise.all([
+      episodeIds.length > 0
+        ? prisma.episodeDailyStats.groupBy({
+            by: ["episodeId"],
+            where: { episodeId: { in: episodeIds } },
+            _sum: { plays: true },
+          })
+        : [],
+      episodeIds.length > 0
+        ? prisma.listeningSession.groupBy({
+            by: ["episodeId"],
+            where: { episodeId: { in: episodeIds } },
+            _count: { id: true },
+          })
+        : [],
+    ]);
+
+    const dailyMap = new Map(dailyStatsAgg.map((s) => [s.episodeId, s._sum.plays ?? 0]));
+    const sessionMap = new Map(sessionAgg.map((s) => [s.episodeId, s._count.id ?? 0]));
+
+    const enrichedData = data.map((ep) => {
+      const dailyPlays = dailyMap.get(ep.id) || 0;
+      const sessionPlays = sessionMap.get(ep.id) || 0;
+      const historyPlays = ep._count?.histories || 0;
+      const totalPlays = Math.max(dailyPlays, sessionPlays, historyPlays);
+      return {
+        ...ep,
+        plays: totalPlays,
+        _count: {
+          ...ep._count,
+          plays: totalPlays,
+          histories: totalPlays,
+        },
+      };
+    });
+
+    return { data: enrichedData, total, counts, podcasts };
   }
 
   static async listEpisodes(idOrSlug: string) {

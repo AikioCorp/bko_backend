@@ -10,12 +10,31 @@ import { NotificationService } from "../../services/notification.service.js";
 
 const BCRYPT_ROUNDS = 12;
 
+export class AccountSuspendedError extends Error {
+  code = "ACCOUNT_SUSPENDED";
+  details: {
+    reason: string;
+    isPermanent: boolean;
+    suspendedAt?: string;
+  };
+
+  constructor(reason?: string | null, suspendedAt?: Date | null) {
+    super(reason || "Votre compte a été suspendu par l'administration.");
+    this.name = "AccountSuspendedError";
+    this.details = {
+      reason: reason || "Votre compte a été suspendu par l'administration.",
+      isPermanent: true,
+      suspendedAt: suspendedAt ? suspendedAt.toISOString() : undefined,
+    };
+  }
+}
+
 export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 export function isOtpTestMode(): boolean {
-  if (process.env.AUTH_OTP_MODE === "test") return true;
+  if (process.env.AUTH_OTP_MODE === "test" || process.env.NODE_ENV === "test") return true;
   if (process.env.AUTH_OTP_MODE === "email") return false;
   return process.env.ENABLE_DEV_OTP === "true" || process.env.NODE_ENV !== "production";
 }
@@ -43,38 +62,46 @@ export class AuthService {
     phoneNumber?: string;
   }) {
     const { email, password, fullName, phoneNumber } = params;
-
-    // Réponse générique volontairement identique que le compte existe ou non
-    // (anti-énumération : on ne révèle jamais si un email/téléphone est déjà inscrit).
-    const genericMessage = "Si ces informations sont valides, un code de vérification a été envoyé.";
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phoneNumber?.trim() || null;
     const isTestMode = isOtpTestMode();
     const otpCode = crypto.randomInt(100000, 1000000).toString(); // OTP 6 chiffres cryptographiquement sûr
     const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // Expiration 15 min
 
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, ...(phoneNumber ? [{ phoneNumber }] : [])],
+        OR: [
+          { email: { equals: normalizedEmail, mode: "insensitive" } },
+          ...(normalizedPhone ? [{ phoneNumber: normalizedPhone }] : []),
+        ],
       },
     });
 
     if (existingUser) {
       if (existingUser.isVerified) {
-        return { email, message: genericMessage };
+        throw new Error("EMAIL_ALREADY_EXISTS");
       }
 
-      // Compte non vérifié : on régénère un véritable OTP
+      // Compte existant non encore vérifié : on met à jour les informations et on renvoie un nouveau code OTP
+      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       await prisma.user.update({
         where: { id: existingUser.id },
-        data: { otpCode: hashToken(otpCode), otpExpiresAt },
+        data: {
+          fullName: fullName.trim(),
+          passwordHash,
+          otpCode: hashToken(otpCode),
+          otpExpiresAt,
+        },
       });
 
       if (!isTestMode) {
-        void MailService.sendNow(Emails.otp(existingUser.email, otpCode, existingUser.fullName));
+        const mail = await Emails.otp(existingUser.email, otpCode, fullName.trim());
+        void MailService.sendNow(mail);
       }
 
       return {
         email: existingUser.email,
-        message: genericMessage,
+        message: "Un nouveau code de vérification a été envoyé à votre adresse email.",
         ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
       };
     }
@@ -84,9 +111,9 @@ export class AuthService {
 
     await prisma.user.create({
       data: {
-        email,
-        phoneNumber,
-        fullName,
+        email: normalizedEmail,
+        phoneNumber: normalizedPhone,
+        fullName: fullName.trim(),
         passwordHash,
         isVerified: false,
         otpCode: hashToken(otpCode), // OTP stocké haché, jamais en clair
@@ -104,41 +131,123 @@ export class AuthService {
     });
 
     if (!isTestMode) {
-      void MailService.sendNow(Emails.otp(email, otpCode, fullName));
+      const mail = await Emails.otp(normalizedEmail, otpCode, fullName.trim());
+      void MailService.sendNow(mail);
     }
 
     return {
-      email,
-      message: genericMessage,
+      email: normalizedEmail,
+      message: "Un code de vérification a été envoyé à votre adresse email.",
       ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
     };
   }
 
-  /** Demande de réinitialisation : réponse identique que le compte existe ou non (anti-énumération). */
+  /** Demande de réinitialisation par code OTP à 6 chiffres : réponse identique que le compte existe ou non (anti-énumération). */
   static async forgotPassword(email: string) {
-    const user = await prisma.user.findFirst({ where: { email: { equals: email.trim(), mode: "insensitive" } } });
-    if (user && user.passwordHash && !user.isSuspended) {
-      const token = crypto.randomBytes(32).toString("hex");
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { passwordResetToken: hashToken(token), passwordResetExpiresAt: new Date(Date.now() + 60 * 60 * 1000) },
-      });
-      void MailService.sendNow(Emails.resetPassword(user.email, token));
+    const genericMessage = "Si un compte correspond à cette adresse, un code de réinitialisation vient d'être envoyé.";
+    const isTestMode = isOtpTestMode();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
+    });
+
+    if (!user || user.isSuspended) {
+      return { email: normalizedEmail, message: genericMessage };
     }
-    return { message: "Si un compte correspond à cette adresse, un email de réinitialisation vient d'être envoyé." };
+
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetToken: hashToken(otpCode),
+        passwordResetExpiresAt: otpExpiresAt,
+      },
+    });
+
+    if (!isTestMode) {
+      void MailService.sendNow(await Emails.resetPassword(user.email, otpCode, user.fullName));
+    }
+
+    return {
+      email: user.email,
+      message: "Un code de réinitialisation a été envoyé par email.",
+      ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
+    };
   }
 
-  static async resetPassword(token: string, newPassword: string) {
+  static async verifyResetOtp(email: string, otpCode: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const code = String(otpCode || "").trim();
+
+    if (!/^\d{6}$/.test(code)) {
+      throw new Error("RESET_CODE_INVALID");
+    }
+
     const user = await prisma.user.findFirst({
-      where: { passwordResetToken: hashToken(token), passwordResetExpiresAt: { gt: new Date() } },
+      where: {
+        email: { equals: normalizedEmail, mode: "insensitive" },
+        passwordResetToken: hashToken(code),
+        passwordResetExpiresAt: { gt: new Date() },
+      },
     });
+
+    if (!user) {
+      throw new Error("RESET_CODE_INVALID");
+    }
+
+    return {
+      valid: true,
+      email: user.email,
+      message: "Code de réinitialisation valide.",
+    };
+  }
+
+  static async resetPassword(params: {
+    token?: string;
+    email?: string;
+    otpCode?: string;
+    password: string;
+  } | string, legacyPassword?: string) {
+    // Rétrocompatibilité signature (token: string, newPassword: string)
+    const normalizedParams = typeof params === "string"
+      ? { token: params, password: legacyPassword ?? "" }
+      : params;
+
+    let user;
+    if (normalizedParams.email && normalizedParams.otpCode) {
+      const code = String(normalizedParams.otpCode).trim();
+      const normalizedEmail = normalizedParams.email.trim().toLowerCase();
+      user = await prisma.user.findFirst({
+        where: {
+          email: { equals: normalizedEmail, mode: "insensitive" },
+          passwordResetToken: hashToken(code),
+          passwordResetExpiresAt: { gt: new Date() },
+        },
+      });
+    } else if (normalizedParams.token) {
+      user = await prisma.user.findFirst({
+        where: {
+          passwordResetToken: hashToken(normalizedParams.token),
+          passwordResetExpiresAt: { gt: new Date() },
+        },
+      });
+    }
+
     if (!user) throw new Error("RESET_TOKEN_INVALID");
 
-    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    const passwordHash = await bcrypt.hash(normalizedParams.password, BCRYPT_ROUNDS);
     await prisma.$transaction([
       prisma.user.update({
         where: { id: user.id },
-        data: { passwordHash, passwordResetToken: null, passwordResetExpiresAt: null },
+        data: {
+          passwordHash,
+          passwordResetToken: null,
+          passwordResetExpiresAt: null,
+          isVerified: true,
+        },
       }),
       // Toutes les sessions existantes sont coupées : un éventuel intrus perd son accès.
       prisma.refreshToken.updateMany({ where: { userId: user.id }, data: { isRevoked: true } }),
@@ -178,7 +287,8 @@ export class AuthService {
     });
 
     if (!isTestMode) {
-      void MailService.sendNow(Emails.otp(user.email, otpCode, user.fullName));
+      const mail = await Emails.otp(user.email, otpCode, user.fullName);
+      void MailService.sendNow(mail);
     }
 
     return {
@@ -210,6 +320,10 @@ export class AuthService {
 
     if (!user) {
       throw new Error("INVALID_CREDENTIALS");
+    }
+
+    if (user.isSuspended) {
+      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
     }
 
     const inputCode = String(params.otpCode || "").trim();
@@ -341,7 +455,7 @@ export class AuthService {
     }
 
     if (user.isSuspended) {
-      throw new Error("INVALID_CREDENTIALS");
+      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
     }
 
     // Le compte doit avoir été vérifié par OTP avant de pouvoir se connecter
@@ -439,8 +553,12 @@ export class AuthService {
       throw new Error("INVALID_REFRESH_TOKEN");
     }
 
-    if (storedToken.expiresAt < new Date() || storedToken.user.isSuspended) {
+    if (storedToken.expiresAt < new Date()) {
       throw new Error("INVALID_REFRESH_TOKEN");
+    }
+
+    if (storedToken.user.isSuspended) {
+      throw new AccountSuspendedError(storedToken.user.suspendedReason, storedToken.user.suspendedAt);
     }
 
     // Révocation de l'ancien token (Rotation)
@@ -542,7 +660,7 @@ export class AuthService {
     });
 
     if (user && user.isSuspended) {
-      throw new Error("ACCOUNT_SUSPENDED");
+      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
     }
 
     if (!user) {
@@ -645,6 +763,202 @@ export class AuthService {
       },
       accessToken,
       refreshToken: rawRefreshToken,
+    };
+  }
+
+  /**
+   * Connexion instantanée sans mot de passe : Envoi d'un code OTP à usage unique
+   */
+  static async requestOtpLogin(identifier: string) {
+    const input = identifier.trim().toLowerCase();
+    const phoneVariants = [input];
+    if (!input.startsWith("+")) {
+      phoneVariants.push(`+223${input}`);
+    } else if (input.startsWith("+223")) {
+      phoneVariants.push(input.replace("+223", ""));
+    }
+
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: input, mode: "insensitive" } },
+          { username: { equals: input, mode: "insensitive" } },
+          { phoneNumber: { in: phoneVariants } },
+        ],
+      },
+    });
+
+    const isTestMode = isOtpTestMode();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    if (!user) {
+      if (!input.includes("@")) {
+        throw new Error("USER_NOT_FOUND");
+      }
+      const roleUser = await prisma.role.findUnique({ where: { name: "USER" } });
+      user = await prisma.user.create({
+        data: {
+          email: input,
+          fullName: input.split("@")[0],
+          isVerified: false,
+          otpCode: hashToken(otpCode),
+          otpExpiresAt,
+          ...(roleUser ? { userRoles: { create: { roleId: roleUser.id } } } : {}),
+        },
+      });
+    } else {
+      if (user.isSuspended) {
+        throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpCode: hashToken(otpCode),
+          otpExpiresAt,
+        },
+      });
+    }
+
+    if (!isTestMode) {
+      const mail = await Emails.loginOtp(user.email, otpCode, user.fullName);
+      void MailService.sendNow(mail);
+    }
+
+    return {
+      email: user.email,
+      message: "Un code de connexion vous a été envoyé par e-mail.",
+      ...(isTestMode ? { testOtpCode: otpCode, otpCode } : {}),
+    };
+  }
+
+  /**
+   * Validation de l'OTP de connexion instantanée
+   */
+  static async verifyOtpLogin(params: {
+    identifier: string;
+    otpCode: string;
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const input = params.identifier.trim().toLowerCase();
+    const phoneVariants = [input];
+    if (!input.startsWith("+")) {
+      phoneVariants.push(`+223${input}`);
+    } else if (input.startsWith("+223")) {
+      phoneVariants.push(input.replace("+223", ""));
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: input, mode: "insensitive" } },
+          { username: { equals: input, mode: "insensitive" } },
+          { phoneNumber: { in: phoneVariants } },
+        ],
+      },
+      include: {
+        userRoles: {
+          include: { role: true },
+        },
+        recommendationProfile: {
+          select: { onboardingCompleted: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    if (user.isSuspended) {
+      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+    }
+
+    const code = String(params.otpCode || "").trim();
+    if (!/^\d{6}$/.test(code)) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    const hashedInput = hashToken(code);
+    if (!user.otpCode || user.otpCode !== hashedInput) {
+      throw new Error("INVALID_CREDENTIALS");
+    }
+
+    if (user.otpExpiresAt && user.otpExpiresAt < new Date()) {
+      throw new Error("RESET_TOKEN_EXPIRED");
+    }
+
+    // Valider le compte et consommer l'OTP
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isVerified: true,
+        otpCode: null,
+        otpExpiresAt: null,
+      },
+    });
+
+    const roles = user.userRoles.map((ur) => ur.role.name);
+    const lifetime = resolveTokenLifetime(params.deviceType);
+
+    const accessToken = jwt.sign(
+      { id: user.id, email: user.email, roles },
+      JWT_SECRET,
+      { expiresIn: lifetime.accessExpiresIn }
+    );
+
+    const rawRefreshToken = crypto.randomBytes(40).toString("hex");
+    const tokenHash = hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
+
+    let device = null;
+    if (params.deviceType || params.deviceName) {
+      device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          deviceType: params.deviceType || "WEB",
+          deviceName: params.deviceName || "Navigateur Web",
+        },
+      });
+    }
+
+    await Promise.all([
+      prisma.session.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          expiresAt,
+        },
+      }),
+      prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          deviceId: device?.id,
+          tokenHash,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        avatar: user.avatar,
+        roles,
+        isVerified: true,
+        onboardingCompleted: user.recommendationProfile?.onboardingCompleted ?? false,
+      },
+      accessToken,
+      refreshToken: rawRefreshToken,
+      message: "Connexion réussie",
     };
   }
 }

@@ -38,6 +38,7 @@ export class UserService {
         countryPreferences: { include: { country: true } },
         notificationPreference: true,
         recommendationProfile: { select: { onboardingCompleted: true } },
+        passwordHash: true,
       },
     });
 
@@ -52,10 +53,11 @@ export class UserService {
       )
     );
 
-    const { userRoles, ...cleanUser } = user;
+    const { userRoles, passwordHash, ...cleanUser } = user;
 
     return {
       ...cleanUser,
+      hasPassword: Boolean(passwordHash),
       roles,
       permissions,
     };

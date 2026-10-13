@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma.js";
+import { PlayTrackingService } from "../episodes/play-tracking.service.js";
 
 export interface PlaybackSessionEventPayload {
   clientEventId: string;
@@ -181,6 +182,19 @@ export class InteractionCollectorService {
           }
 
           processed++;
+
+          // Synchronisation avec EpisodeDailyStats (statistiques créateur et catalogue)
+          try {
+            if (evt.eventType === "start") {
+              await PlayTrackingService.record(evt.episodeId, "start", userId);
+            } else if (evt.eventType === "complete") {
+              await PlayTrackingService.record(evt.episodeId, "complete", userId);
+            } else if (evt.eventType === "progress" && validDelta > 0) {
+              await PlayTrackingService.record(evt.episodeId, "progress", userId, validDelta);
+            }
+          } catch {
+            // Tolérance si épisode supprimé ou statut non publié
+          }
         });
       } catch (err: any) {
         if (err.code === "P2002") {

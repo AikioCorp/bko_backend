@@ -52,8 +52,11 @@ export class AdminController {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 50;
       const search = (req.query.search as string) || "";
+      const status = (req.query.status as string) || "";
+      const sortBy = (req.query.sortBy as string) || "newest";
+      const podcastId = (req.query.podcastId as string) || "";
       const skip = (page - 1) * limit;
-      const result = await AdminCatalogService.listAllEpisodes(skip, limit, search);
+      const result = await AdminCatalogService.listAllEpisodes(skip, limit, search, status, sortBy, podcastId);
       return sendSuccess(res, result);
     } catch (e: any) {
       return sendError(res, e.message, "INTERNAL_ERROR", 500);

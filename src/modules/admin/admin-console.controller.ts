@@ -241,6 +241,39 @@ export class AdminConsoleController {
     }
   }
 
+  static async updateUser(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          fullName: z.string().min(1).max(100).optional(),
+          email: z.string().email().max(254).optional(),
+          phoneNumber: z.string().max(30).nullable().optional(),
+          username: z.string().min(3).max(40).nullable().optional(),
+          isVerified: z.boolean().optional(),
+        })
+        .parse(req.body);
+      return sendSuccess(res, await AdminRbacService.updateUser(actor(req), idParam(req), b, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async adminResetPassword(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          mode: z.enum(["DIRECT", "GENERATE", "SEND_EMAIL"]),
+          password: z.string().min(8).max(72).optional(),
+          revokeSessions: z.boolean().optional(),
+          notifyUser: z.boolean().optional(),
+        })
+        .parse(req.body);
+      return sendSuccess(res, await AdminRbacService.adminResetPassword(actor(req), idParam(req), b, req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
   static async setCreatorVerification(req: AuthenticatedRequest, res: Response) {
     try {
       const b = z.object({ verified: z.boolean() }).parse(req.body);

@@ -13,7 +13,7 @@ export type PlayEvent = "start" | "qualified" | "complete" | "progress";
 export class PlayTrackingService {
   static async record(episodeId: string, event: PlayEvent, userId?: string, seconds = 0) {
     const episode = await prisma.episode.findUnique({ where: { id: episodeId }, select: { status: true } });
-    if (!episode || episode.status !== "PUBLISHED") throw new Error("EPISODE_NOT_FOUND");
+    if (!episode || episode.status !== "PUBLISHED") return;
 
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);

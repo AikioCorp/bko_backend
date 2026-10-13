@@ -140,8 +140,11 @@ router.post("/auth/register", authLimiter, accountLimiter(5), AuthController.reg
 router.post("/auth/resend-otp", authLimiter, accountLimiter(5), AuthController.resendOtp);
 router.post("/auth/verify-otp", authLimiter, accountLimiter(5), AuthController.verifyOtp);
 router.post("/auth/forgot-password", authLimiter, accountLimiter(3), AuthController.forgotPassword);
+router.post("/auth/verify-reset-otp", authLimiter, AuthController.verifyResetOtp);
 router.post("/auth/reset-password", authLimiter, AuthController.resetPassword);
 router.post("/auth/login", authLimiter, accountLimiter(10), AuthController.login);
+router.post("/auth/otp-login/send", authLimiter, accountLimiter(5), AuthController.requestOtpLogin);
+router.post("/auth/otp-login/verify", authLimiter, accountLimiter(10), AuthController.verifyOtpLogin);
 router.post("/auth/google", authLimiter, AuthController.googleLogin);
 router.post("/auth/refresh", refreshLimiter, AuthController.refreshToken);
 router.post("/auth/logout", authLimiter, AuthController.logout);
@@ -306,6 +309,8 @@ router.get("/admin/users", authenticateToken, requirePermission("users.view"), A
 router.get("/admin/users/:id/360", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
 router.get("/admin/users/:id", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
 router.put("/admin/users/:id/roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserRoles);
+router.patch("/admin/users/:id", authenticateToken, requirePermission("users.edit"), AdminConsoleController.updateUser);
+router.post("/admin/users/:id/reset-password", authenticateToken, requirePermission("users.edit"), AdminConsoleController.adminResetPassword);
 router.post("/admin/users/:id/suspension", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserSuspension);
 router.delete("/admin/users/:id", authenticateToken, requirePermission("users.delete"), AdminConsoleController.deleteUser);
 router.post("/admin/users/:id/creator-verification", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setCreatorVerification);

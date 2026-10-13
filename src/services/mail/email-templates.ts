@@ -53,21 +53,69 @@ export const Emails = {
     };
   },
 
-  resetPassword(to: string, token: string): Mail {
-    const url = `${APP_URL}/reset-password?token=${encodeURIComponent(token)}`;
+  async loginOtp(to: string, code: string, userName?: string | null): Promise<Mail> {
+    const greeting = userName?.trim() ? `Bonjour ${userName.trim().split(" ")[0]},` : "Bonjour,";
     const paragraphs = [
-      "Vous avez demandé à réinitialiser votre mot de passe.",
-      "Ce lien est valable 1 heure. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe reste inchangé.",
+      greeting,
+      `Votre code de connexion instantanée est : ${code}`,
+      "Saisissez ce code pour vous connecter directement à Bamako Podcast. Il est valable 15 minutes.",
+      "Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email.",
     ];
+    let htmlContent: string;
+    try {
+      htmlContent = await render(
+        React.createElement(OtpEmail, {
+          code,
+          userName,
+          title: "Connexion instantanée",
+          description: "Voici votre code de connexion à usage unique pour accéder directement à votre compte :",
+        })
+      );
+    } catch {
+      htmlContent = layout({ preheader: `Code ${code}`, title: "Connexion instantanée", paragraphs });
+    }
     return {
       to,
-      subject: "Réinitialisation de votre mot de passe",
-      html: layout({
-        preheader: "Réinitialisez votre mot de passe",
+      subject: `${code} est votre code de connexion Bamako Podcast`,
+      html: htmlContent,
+      text: text("Connexion instantanée", paragraphs),
+    };
+  },
+
+  async resetPassword(to: string, otpCode: string, userName?: string | null): Promise<Mail> {
+    const url = `${APP_URL}/reset-password?email=${encodeURIComponent(to)}&code=${encodeURIComponent(otpCode)}`;
+    const greeting = userName?.trim() ? `Bonjour ${userName.trim().split(" ")[0]},` : "Bonjour,";
+    const paragraphs = [
+      greeting,
+      "Vous avez demandé à réinitialiser le mot de passe de votre compte Bamako Podcast.",
+      `Votre code de réinitialisation est : ${otpCode}`,
+      "Ce code est valable 15 minutes. Vous pouvez le saisir directement sur le site ou dans l'application, ou cliquer sur le lien ci-dessous.",
+      "Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : votre mot de passe reste inchangé.",
+    ];
+    let htmlContent: string;
+    try {
+      htmlContent = await render(
+        React.createElement(OtpEmail, {
+          code: otpCode,
+          userName,
+          title: "Réinitialisation du mot de passe",
+          description: "Pour choisir un nouveau mot de passe, saisissez le code ci-dessous sur le site ou dans l'application, ou cliquez sur le bouton :",
+          ctaUrl: url,
+          ctaLabel: "Réinitialiser mon mot de passe",
+        })
+      );
+    } catch {
+      htmlContent = layout({
+        preheader: `Code ${otpCode} — Réinitialisation de votre mot de passe`,
         title: "Réinitialisation du mot de passe",
         paragraphs,
         cta: { label: "Choisir un nouveau mot de passe", url },
-      }),
+      });
+    }
+    return {
+      to,
+      subject: `${otpCode} est votre code de réinitialisation Bamako Podcast`,
+      html: htmlContent,
       text: text("Réinitialisation du mot de passe", paragraphs, url),
     };
   },

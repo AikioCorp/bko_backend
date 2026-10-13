@@ -37,7 +37,7 @@ export class CreatorEpisodeService {
       ];
     }
 
-    return prisma.episode.findMany({
+    const episodes = await prisma.episode.findMany({
       where,
       orderBy: { createdAt: "desc" },
       include: {
@@ -49,6 +49,36 @@ export class CreatorEpisodeService {
         },
         season: true,
       },
+    });
+
+    const epIds = episodes.map((e) => e.id);
+    const [dailyAgg, sessionAgg] = await Promise.all([
+      epIds.length > 0
+        ? prisma.episodeDailyStats.groupBy({
+            by: ["episodeId"],
+            where: { episodeId: { in: epIds } },
+            _sum: { plays: true },
+          })
+        : [],
+      epIds.length > 0
+        ? prisma.listeningSession.groupBy({
+            by: ["episodeId"],
+            where: { episodeId: { in: epIds } },
+            _count: { id: true },
+          })
+        : [],
+    ]);
+
+    const dailyMap = new Map(dailyAgg.map((s) => [s.episodeId, s._sum.plays ?? 0]));
+    const sessionMap = new Map(sessionAgg.map((s) => [s.episodeId, s._count.id ?? 0]));
+
+    return episodes.map((ep) => {
+      const plays = Math.max(dailyMap.get(ep.id) || 0, sessionMap.get(ep.id) || 0);
+      return {
+        ...ep,
+        plays,
+        _count: { plays },
+      };
     });
   }
 

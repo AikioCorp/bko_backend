@@ -16,11 +16,19 @@ import {
 interface OtpEmailProps {
   code: string;
   userName?: string | null;
+  title?: string;
+  description?: string;
+  ctaUrl?: string;
+  ctaLabel?: string;
 }
 
 export const OtpEmail: React.FC<OtpEmailProps> = ({
   code = "123456",
   userName,
+  title = "Vérification de sécurité",
+  description = "Pour sécuriser votre compte et finaliser votre connexion, veuillez saisir le code de vérification à usage unique ci-dessous :",
+  ctaUrl,
+  ctaLabel = "Continuer",
 }) => {
   // Déterminer la salutation (ex: "Bonjour Salif," ou simplement "Bonjour,")
   const greeting = userName?.trim()
@@ -30,9 +38,9 @@ export const OtpEmail: React.FC<OtpEmailProps> = ({
   return (
     <Html lang="fr">
       <Head>
-        <title>Votre code de vérification Bamako Podcast</title>
+        <title>{`${title} — Bamako Podcast`}</title>
       </Head>
-      <Preview>Votre code de vérification Bamako Podcast : {code}</Preview>
+      <Preview>{code} — {title} Bamako Podcast</Preview>
       <Body style={main}>
         <Container style={container}>
           {/* Header avec Logo officiel Bamako Podcast */}
@@ -56,12 +64,12 @@ export const OtpEmail: React.FC<OtpEmailProps> = ({
 
           {/* Corps de l'email */}
           <Section style={contentSection}>
-            <Heading style={heading}>Vérification de sécurité</Heading>
+            <Heading style={heading}>{title}</Heading>
             
             <Text style={greetingText}>{greeting}</Text>
             
             <Text style={paragraph}>
-              Pour sécuriser votre compte et finaliser votre connexion, veuillez saisir le code de vérification à usage unique ci-dessous :
+              {description}
             </Text>
 
             {/* Box OTP Stylisée */}
@@ -71,6 +79,32 @@ export const OtpEmail: React.FC<OtpEmailProps> = ({
               <Text style={otpExpiry}>Valable pendant 15 minutes • À usage unique</Text>
             </Section>
 
+            {ctaUrl && (
+              <Section style={{ textAlign: "center", margin: "22px 0" }}>
+                <Link
+                  href={ctaUrl}
+                  style={{
+                    backgroundColor: "#FFBF00",
+                    color: "#0B0B0B",
+                    fontWeight: 700,
+                    fontSize: "14px",
+                    padding: "12px 24px",
+                    borderRadius: "10px",
+                    display: "inline-block",
+                    textDecoration: "none",
+                  }}
+                >
+                  {ctaLabel}
+                </Link>
+                <Text style={{ fontSize: "11px", color: "#757575", marginTop: "10px" }}>
+                  Ou ouvrez directement ce lien :<br />
+                  <Link href={ctaUrl} style={{ color: "#FFBF00", wordBreak: "break-all" }}>
+                    {ctaUrl}
+                  </Link>
+                </Text>
+              </Section>
+            )}
+
             {/* Note de sécurité */}
             <Section style={securityNote}>
               <Text style={securityText}>
@@ -79,7 +113,7 @@ export const OtpEmail: React.FC<OtpEmailProps> = ({
             </Section>
 
             <Text style={helpText}>
-              Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email en toute sécurité.
+              Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email en toute sécurité : votre compte reste sécurisé.
             </Text>
           </Section>
 
