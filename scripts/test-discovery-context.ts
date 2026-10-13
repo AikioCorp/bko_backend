@@ -30,27 +30,27 @@ async function run() {
 
     // 3. Tester les filtres du catalogue Episode avec les contextes réels
     console.log("3. Test du catalogue Épisodes avec filtres...");
-    const shortEpisodes = await EpisodeService.getCatalog({
+    const shortEpisodes = await EpisodeService.getCatalogEpisodes({
       duration: "SHORT",
       limit: 5,
     });
-    console.log(`  ✓ Format court (<20 min) : ${shortEpisodes.data.length} épisode(s) trouvé(s)`);
+    console.log(`  ✓ Format court (<20 min) : ${shortEpisodes.episodes.length} épisode(s) trouvé(s)`);
 
-    const popularEpisodes = await EpisodeService.getCatalog({
+    const popularEpisodes = await EpisodeService.getCatalogEpisodes({
       sort: "popular",
       limit: 5,
     });
-    console.log(`  ✓ Tri populaire : ${popularEpisodes.data.length} épisode(s) trouvé(s)`);
+    console.log(`  ✓ Tri populaire : ${popularEpisodes.episodes.length} épisode(s) trouvé(s)`);
 
-    const oldestEpisodes = await EpisodeService.getCatalog({
+    const oldestEpisodes = await EpisodeService.getCatalogEpisodes({
       sort: "oldest",
       limit: 5,
     });
-    console.log(`  ✓ Tri anciens (début émission) : ${oldestEpisodes.data.length} épisode(s) trouvé(s)`);
+    console.log(`  ✓ Tri anciens (début émission) : ${oldestEpisodes.episodes.length} épisode(s) trouvé(s)`);
 
     // 4. Tester le catalogue Podcasts avec filtres
     console.log("4. Test du catalogue Podcasts...");
-    const popularPodcasts = await PodcastService.findAll({
+    const popularPodcasts = await PodcastService.getPodcasts({
       sort: "popular",
       limit: 5,
     });
