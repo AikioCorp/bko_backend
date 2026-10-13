@@ -20,6 +20,21 @@ export function isOtpTestMode(): boolean {
   return process.env.ENABLE_DEV_OTP === "true" || process.env.NODE_ENV !== "production";
 }
 
+export function resolveTokenLifetime(deviceType?: string | null): { accessExpiresIn: jwt.SignOptions["expiresIn"]; refreshExpiresInDays: number } {
+  const norm = String(deviceType || "").toUpperCase();
+  const isMobile = norm.includes("MOBILE") || norm.includes("ANDROID") || norm.includes("IOS");
+  if (isMobile) {
+    return {
+      accessExpiresIn: (process.env.JWT_MOBILE_ACCESS_EXPIRES_IN as any) || "30d",
+      refreshExpiresInDays: 90,
+    };
+  }
+  return {
+    accessExpiresIn: (process.env.JWT_ACCESS_EXPIRES_IN as any) || "7d",
+    refreshExpiresInDays: 30,
+  };
+}
+
 export class AuthService {
   static async register(params: {
     email: string;
@@ -223,17 +238,19 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.name);
 
-    // Générer Access Token (15m)
+    const lifetime = resolveTokenLifetime(params.deviceType);
+
+    // Générer Access Token
     const accessToken = jwt.sign(
       { id: user.id, email: user.email, roles },
       JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: lifetime.accessExpiresIn }
     );
 
-    // Générer Refresh Token (7 jours)
+    // Générer Refresh Token
     const rawRefreshToken = crypto.randomBytes(40).toString("hex");
     const tokenHash = hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
 
     let device = null;
     if (params.deviceType) {
@@ -335,17 +352,19 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.name);
 
-    // Générer Access Token (15m)
+    const lifetime = resolveTokenLifetime(params.deviceType);
+
+    // Générer Access Token
     const accessToken = jwt.sign(
       { id: user.id, email: user.email, roles },
       JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: lifetime.accessExpiresIn }
     );
 
-    // Générer Refresh Token (7 jours)
+    // Générer Refresh Token
     const rawRefreshToken = crypto.randomBytes(40).toString("hex");
     const tokenHash = hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
 
     // Créer ou enregistrer l'appareil
     let device = null;
@@ -405,6 +424,7 @@ export class AuthService {
             userRoles: { include: { role: true } },
           },
         },
+        device: true,
       },
     });
 
@@ -429,17 +449,19 @@ export class AuthService {
       data: { isRevoked: true },
     });
 
+    const lifetime = resolveTokenLifetime(storedToken.device?.deviceType);
+
     // Génération du nouveau duo de tokens
     const roles = storedToken.user.userRoles.map((ur) => ur.role.name);
     const newAccessToken = jwt.sign(
       { id: storedToken.user.id, email: storedToken.user.email, roles },
       JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: lifetime.accessExpiresIn }
     );
 
     const newRawRefreshToken = crypto.randomBytes(40).toString("hex");
     const newHash = hashToken(newRawRefreshToken);
-    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const newExpiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
 
     await prisma.refreshToken.create({
       data: {
@@ -566,17 +588,19 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.name);
 
-    // Access Token 15m
+    const lifetime = resolveTokenLifetime(params.deviceType);
+
+    // Access Token
     const accessToken = jwt.sign(
       { id: user.id, email: user.email, roles },
       JWT_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: lifetime.accessExpiresIn }
     );
 
-    // Refresh Token 7 jours
+    // Refresh Token
     const rawRefreshToken = crypto.randomBytes(40).toString("hex");
     const tokenHash = hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
 
     let device = null;
     if (params.deviceType) {
