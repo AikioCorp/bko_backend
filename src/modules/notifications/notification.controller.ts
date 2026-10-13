@@ -95,7 +95,7 @@ export class NotificationController {
 
       const schema = z.object({
         userIds: z.array(z.string()).optional(),
-        target: z.enum(["ALL", "ACTIVE_LISTENERS", "INACTIVE_7D", "SPECIFIC"]).default("SPECIFIC"),
+        target: z.enum(["ALL", "ACTIVE_LISTENERS", "INACTIVE_7D", "TODAY_REGISTERED", "SPECIFIC"]).default("ALL"),
         title: z.string().min(1).max(200),
         body: z.string().min(1).max(1000),
         link: z.string().optional(),
@@ -111,6 +111,17 @@ export class NotificationController {
         targetUserIds = data.userIds;
       } else if (data.target === "ALL") {
         const users = await prisma.user.findMany({ select: { id: true }, take: 5000 });
+        targetUserIds = users.map((u) => u.id);
+      } else if (data.target === "TODAY_REGISTERED") {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const users = await prisma.user.findMany({
+          where: {
+            createdAt: { gte: startOfDay },
+          },
+          select: { id: true },
+          take: 5000,
+        });
         targetUserIds = users.map((u) => u.id);
       } else if (data.target === "INACTIVE_7D") {
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
