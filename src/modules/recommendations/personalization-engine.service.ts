@@ -39,11 +39,12 @@ export class PersonalizationEngineService {
     anonymousId?: string,
     countryId = "all",
     category = "all",
-    cursor?: string
+    cursor?: string,
+    heroOptions: { refresh?: boolean; previousIds?: string[] } = {}
   ): Promise<RecommendationBatchResponse> {
     const cacheKey = `home:${userId || "anon"}:${anonymousId || "none"}:${countryId}:${category}:${cursor || "0"}`;
     const cached = this.cache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!heroOptions.refresh && cached && cached.expiresAt > Date.now()) {
       return cached.data;
     }
 
@@ -863,7 +864,8 @@ export class PersonalizationEngineService {
     }
 
     // 6. Données de tendances légères et défilement infini initial
-    const trending = await DiscoveryService.getTrendingPodcasts(15, countryId).catch(() => []);
+    // Copy the shared trend cache before filtering this request's response.
+    const trending = [...await DiscoveryService.getTrendingPodcasts(15, countryId).catch(() => [])];
 
     // Défilement infini initial (12 épisodes avec pagination)
     const feedResult = await CandidateSelectorService.selectFeedEpisodes(
@@ -898,10 +900,62 @@ export class PersonalizationEngineService {
       heroSlides = await HeroService.build(
         isPersonalized ? userId : undefined,
         diversifiedEpisodes,
-        trending
+        trending,
+        {
+          previousIds: heroOptions.previousIds,
+          seed: heroOptions.refresh ? crypto.randomUUID() : undefined,
+        }
       );
     } catch (_) {
       heroSlides = [];
+    }
+
+    // Editorial, history and hero pools are not all built by the category
+    // candidate selector. Apply the same constraint to the entire home response.
+    if (category !== "all") {
+      const podcastIds = new Set<string>();
+      const podcastIdOf = (value: any) => value?.podcastId || value?.podcast?.id;
+      for (const section of sections) {
+        for (const item of section.items) {
+          const id = item.podcast?.id || podcastIdOf(item.episode);
+          if (id) podcastIds.add(id);
+        }
+      }
+      for (const slide of heroSlides) {
+        const id = podcastIdOf(slide.episode);
+        if (id) podcastIds.add(id);
+      }
+      for (const episode of diversifiedEpisodes) {
+        const id = podcastIdOf(episode);
+        if (id) podcastIds.add(id);
+      }
+      for (const podcast of trending) podcastIds.add(podcast.id);
+      const eligible = await prisma.podcast.findMany({
+        where: {
+          id: { in: [...podcastIds] },
+          status: "PUBLISHED",
+          categories: { some: { category: { OR: [
+            { id: category }, { slug: category },
+            { name: { equals: category, mode: "insensitive" } },
+          ] } } },
+        },
+        select: { id: true },
+      });
+      const allowed = new Set(eligible.map(p => p.id));
+      for (const section of sections) {
+        section.items = section.items.filter(item =>
+          allowed.has(item.podcast?.id || podcastIdOf(item.episode)));
+      }
+      for (let i = sections.length - 1; i >= 0; i--) {
+        if (!sections[i].items.length) sections.splice(i, 1);
+      }
+      heroSlides = heroSlides.filter(slide => allowed.has(podcastIdOf(slide.episode)));
+      for (let i = diversifiedEpisodes.length - 1; i >= 0; i--) {
+        if (!allowed.has(podcastIdOf(diversifiedEpisodes[i]))) diversifiedEpisodes.splice(i, 1);
+      }
+      for (let i = trending.length - 1; i >= 0; i--) {
+        if (!allowed.has(trending[i].id)) trending.splice(i, 1);
+      }
     }
 
     const heroEpisode = heroSlides[0]?.episode || diversifiedEpisodes[0] || null;
@@ -924,7 +978,7 @@ export class PersonalizationEngineService {
     };
 
     // Mise en cache
-    this.cache.set(cacheKey, {
+    if (!heroOptions.refresh) this.cache.set(cacheKey, {
       data: response,
       expiresAt: Date.now() + this.CACHE_TTL_MS,
       userId,

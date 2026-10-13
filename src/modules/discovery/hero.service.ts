@@ -235,7 +235,8 @@ export class HeroService {
   static async build(
     userId: string | undefined,
     latestEpisodes: any[],
-    trending: any[]
+    trending: any[],
+    options: { previousIds?: string[]; seed?: string } = {}
   ): Promise<HeroSlide[]> {
     const [most, rated, popular, personal] = await Promise.all([
       this.mostListened().catch(() => []),
@@ -294,18 +295,41 @@ export class HeroService {
       ? ["resume", "for_you", "most_listened", "for_you", "top_rated", "popular", "new"]
       : ["most_listened", "popular", "top_rated", "new", "most_listened", "popular"];
 
+    // Rotate within relevant candidate pools, not across unrelated content.
+    // The seed is server-generated and stays stable for a normal cache window.
+    const seed = options.seed || String(Math.floor(Date.now() / (15 * 60_000)));
+    const hash = (id: string) => {
+      let value = 2166136261;
+      for (const char of `${seed}:${id}`) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
+      return value >>> 0;
+    };
+    for (const [kind, queue] of Object.entries(queues)) {
+      if (kind === "resume") continue;
+      // Keep personalization focused on the highest scoring candidates.
+      if (kind === "for_you") queues[kind] = queue.slice(0, 12);
+      queues[kind].sort((a, b) => hash(a.episode.id) - hash(b.episode.id));
+    }
+    const previous = new Set(options.previousIds || []);
+
     const usedPodcasts = new Set<string>();
     const slides: HeroSlide[] = [];
-    const take = (kind: string) => {
+    const take = (kind: string, allowPrevious = false) => {
       const q = queues[kind];
+      const deferred: HeroSlide[] = [];
       while (q && q.length) {
         const s = q.shift()!;
         const key = s.episode?.podcastId || s.episode?.podcast?.id || s.episode?.id;
         if (!key || usedPodcasts.has(key)) continue;
+        if (!allowPrevious && previous.has(s.episode.id) && kind !== "resume") {
+          deferred.push(s);
+          continue;
+        }
+        q.push(...deferred);
         usedPodcasts.add(key);
         slides.push(s);
         return true;
       }
+      q?.push(...deferred);
       return false;
     };
 
@@ -318,6 +342,17 @@ export class HeroService {
     for (const kind of ["for_you", "most_listened", "popular", "top_rated", "new"]) {
       while (slides.length < 5 && take(kind)) {
         /* remplir */
+      }
+    }
+
+    // Small catalogues still get useful banners instead of an empty result.
+    for (const kind of order) {
+      if (slides.length >= 6) break;
+      take(kind, true);
+    }
+    for (const kind of ["for_you", "most_listened", "popular", "top_rated", "new"]) {
+      while (slides.length < 5 && take(kind, true)) {
+        /* complete a small catalogue after the renewal pass */
       }
     }
 

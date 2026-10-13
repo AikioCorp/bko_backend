@@ -16,6 +16,10 @@ export class RecommendationController {
       const country = (req.query.country as string) || "all";
       const category = (req.query.category as string) || "all";
       const cursor = (req.query.cursor as string) || undefined;
+      const refreshHero = req.query.refreshHero === "1";
+      const previousHeroIds = typeof req.query.previousHeroIds === "string"
+        ? req.query.previousHeroIds.split(",").filter(id => /^[a-zA-Z0-9_-]{1,64}$/.test(id)).slice(0, 12)
+        : [];
       // L'authentification vérifiée côté serveur prime de manière absolue sur tout paramètre d'URL
       const verifiedUserId = req.user?.id;
       const anonymousId = (req.headers["x-anonymous-id"] as string) || (req.query.anon as string) || undefined;
@@ -25,11 +29,12 @@ export class RecommendationController {
         anonymousId,
         country,
         category,
-        cursor
+        cursor,
+        { refresh: refreshHero, previousIds: previousHeroIds }
       );
 
       // En-têtes HTTP de cache privé/public
-      if (verifiedUserId) {
+      if (verifiedUserId || refreshHero) {
         res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
       } else {
         res.setHeader("Cache-Control", "public, max-age=60, s-maxage=120, stale-while-revalidate=300");
