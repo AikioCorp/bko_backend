@@ -18,6 +18,7 @@ import { CreatorController } from "../../modules/creator/creator.controller.js";
 import { UploadController } from "../../modules/media/upload.controller.js";
 import { MarketController } from "../../modules/markets/market.controller.js";
 import { RssController } from "../../modules/rss/rss.controller.js";
+import { YouTubeController } from "../../modules/youtube/youtube.controller.js";
 import { AdminController } from "../../modules/admin/admin.controller.js";
 import { CollectionController } from "../../modules/collections/collection.controller.js";
 import { ClaimController } from "../../modules/claims/claim.controller.js";
@@ -25,6 +26,7 @@ import { TranscriptController } from "../../modules/transcripts/transcript.contr
 import { NotificationController } from "../../modules/notifications/notification.controller.js";
 import { CreatorManageController } from "../../modules/creator/creator-manage.controller.js";
 import { AdminRssController } from "../../modules/admin/admin-rss.controller.js";
+import { AdminYouTubeController } from "../../modules/admin/admin-youtube.controller.js";
 import { AdminClassificationController } from "../../modules/admin/admin-classification.controller.js";
 import { AdminConsoleController } from "../../modules/admin/admin-console.controller.js";
 import { AdController } from "../../modules/ads/ad.controller.js";
@@ -289,6 +291,16 @@ router.post("/admin/rss/imports", authenticateToken, requirePermission("catalog.
 router.get("/admin/rss/imports/:id/status", authenticateToken, requirePermission("catalog.view"), AdminRssController.getImportStatus);
 router.post("/admin/podcasts/:id/rss/sync", authenticateToken, requirePermission("catalog.edit"), AdminRssController.syncFeedNow);
 
+// --- ADMIN YOUTUBE IMPORTS & SYNC ---
+router.post("/admin/youtube/preview", authenticateToken, requirePermission("catalog.create"), AdminYouTubeController.preview);
+router.get("/admin/youtube/imports", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.listChannels);
+router.post("/admin/youtube/imports", authenticateToken, requirePermission("catalog.create"), AdminYouTubeController.createImport);
+router.get("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.getChannelStatus);
+router.post("/admin/podcasts/:podcastId/youtube/sync", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.syncChannelNow);
+router.patch("/admin/podcasts/:podcastId/youtube/settings", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.updateSettings);
+router.delete("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePermission("catalog.delete"), AdminYouTubeController.disconnectChannel);
+router.post("/admin/podcasts/:podcastId/youtube/historical-import", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.historicalImport);
+
 // --- ADMIN CATEGORIES & LANGUAGES ---
 router.get("/admin/categories", authenticateToken, AdminClassificationController.listCategories);
 router.post("/admin/categories", authenticateToken, requirePermission("catalog.create"), AdminClassificationController.createCategory);
@@ -382,6 +394,19 @@ router.post("/creator/podcasts/:podcastId/rss/connect", authenticateToken, RssCo
 router.post("/creator/podcasts/:podcastId/rss/sync", authenticateToken, RssController.syncFeedNow);
 router.delete("/creator/podcasts/:podcastId/rss", authenticateToken, RssController.disconnectFeed);
 router.get("/creator/podcasts/:podcastId/rss", authenticateToken, RssController.getFeedStatus);
+
+// --- SYNCHRONISATION & IMPORT YOUTUBE ---
+router.post("/creator/youtube/preview", authenticateToken, YouTubeController.previewChannel);
+router.post("/creator/podcasts/:podcastId/youtube/connect", authenticateToken, YouTubeController.connectChannel);
+router.post("/creator/podcasts/:podcastId/youtube/sync", authenticateToken, YouTubeController.syncChannelNow);
+router.get("/creator/podcasts/:podcastId/youtube", authenticateToken, YouTubeController.getChannelStatus);
+router.patch("/creator/podcasts/:podcastId/youtube/settings", authenticateToken, YouTubeController.updateSettings);
+router.delete("/creator/podcasts/:podcastId/youtube", authenticateToken, YouTubeController.disconnectChannel);
+router.post("/creator/podcasts/:podcastId/youtube/historical-import", authenticateToken, YouTubeController.historicalImport);
+
+// --- WEBHOOKS WEBSUB YOUTUBE (PUBLIC) ---
+router.get("/webhooks/youtube", YouTubeController.handleWebSubChallenge);
+router.post("/webhooks/youtube", YouTubeController.handleWebSubNotification);
 
 // --- ESPACE CRÉATEUR (CREATOR STUDIO) ---
 router.get("/me/creator-profile", authenticateToken, CreatorController.getProfile);
@@ -543,6 +568,10 @@ router.delete("/episodes/:id/likes", authenticateToken, EngagementController.unl
 router.get("/episodes/:id/comments", optionalAuthenticateToken, EngagementController.listComments);
 router.post("/episodes/:id/comments", authenticateToken, accountLimiter(20), EngagementController.createComment);
 router.delete("/comments/:id", authenticateToken, EngagementController.deleteComment);
+router.post("/comments/:id/like", authenticateToken, EngagementController.likeComment);
+router.delete("/comments/:id/like", authenticateToken, EngagementController.unlikeComment);
+router.post("/comments/:id/reactions", authenticateToken, EngagementController.reactComment);
+router.delete("/comments/:id/reactions", authenticateToken, EngagementController.deleteCommentReaction);
 
 router.patch("/creator/episodes/:episodeId/comments-settings", authenticateToken, EngagementController.updateCommentSettings);
 

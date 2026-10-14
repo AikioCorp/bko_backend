@@ -45,6 +45,7 @@ app.use(
 );
 
 app.use(express.json({ limit: "10mb" }));
+app.use(express.text({ type: ["application/atom+xml", "text/xml", "application/xml"], limit: "10mb" }));
 
 // Global Rate Limiting (1000 requêtes par 15 minutes par IP en production)
 const limiter = rateLimit({

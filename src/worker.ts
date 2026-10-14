@@ -2,6 +2,7 @@ import { MediaWorkerService } from "./modules/media/media-worker.service.js";
 import { EpisodePublisherWorkerService } from "./modules/episodes/episode-publisher-worker.service.js";
 import { EmailWorkerService } from "./modules/notifications/email-worker.service.js";
 import { RssWorkerService } from "./modules/rss/rss-worker.service.js";
+import { YouTubeWorkerService } from "./modules/youtube/youtube-worker.service.js";
 import { TranscriptWorkerService } from "./modules/transcripts/transcript-worker.service.js";
 
 import { EmbeddingWorkerService } from "./modules/recommendations/embedding-worker.service.js";
@@ -41,6 +42,8 @@ export async function runWorkerLoop() {
       const mediaProcessed = await MediaWorkerService.processNextJob();
       await RssWorkerService.scheduleAutoSyncs();
       const rssProcessed = await RssWorkerService.processNextJob();
+      await YouTubeWorkerService.scheduleAutoSyncs();
+      const youtubeProcessed = await YouTubeWorkerService.processNextJob();
       const transcriptProcessed = await TranscriptWorkerService.processNextJob();
       const publishProcessed = await EpisodePublisherWorkerService.processNextJob();
       const emailProcessed = await EmailWorkerService.processNextJob();
@@ -48,7 +51,7 @@ export async function runWorkerLoop() {
 
       touchHeartbeat();
 
-      if (!mediaProcessed && !rssProcessed && !transcriptProcessed && !publishProcessed && !emailProcessed && !embeddingProcessed) {
+      if (!mediaProcessed && !rssProcessed && !youtubeProcessed && !transcriptProcessed && !publishProcessed && !emailProcessed && !embeddingProcessed) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
     } catch (error) {

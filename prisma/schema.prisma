@@ -629,6 +629,7 @@ model Podcast {
   externalSources  PodcastExternalSource[]
   followers        PodcastFollow[]
   rssFeed          RssFeed?
+  youtubeChannel   YoutubeChannelSync?
   claims           Claim[]
   editorialItems   EditorialSectionItem[]
   collectionItems  CollectionItem[]
@@ -779,7 +780,10 @@ model Episode {
   dailyStats          EpisodeDailyStats[]
   editorialItems      EditorialSectionItem[]
   collectionItems     CollectionItem[]
-  rssImportedEpisodes RssImportedEpisode[]
+  rssImportedEpisodes   RssImportedEpisode[]
+  youtubeImportedVideos YoutubeImportedVideo[]
+  audioVideoSyncMode    String                 @default("EXACT")
+  audioVideoOffsetSeconds Int                  @default(0)
   uploadSessions      UploadSession[]
   listeningSessions   ListeningSession[]
   listeningEvents     ListeningEvent[]
@@ -1045,6 +1049,79 @@ model RssImportedEpisode {
 
   @@unique([rssFeedId, guid])
 }
+
+model YoutubeChannelSync {
+  id                   String    @id @default(cuid())
+  podcastId            String    @unique
+  podcast              Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  channelId            String
+  channelTitle         String
+  channelHandle        String?
+  channelDescription   String?   @db.Text
+  thumbnailUrl         String?
+  customUrl            String?
+  uploadsPlaylistId    String?
+  feedUrl              String
+
+  syncEnabled          Boolean   @default(true)
+  syncStatus           String    @default("IDLE") // IDLE, SYNCING, ERROR, PAUSED
+  errorMessage         String?
+  lastSyncAt           DateTime?
+  lastSuccessfulSyncAt DateTime?
+  nextSyncAt           DateTime?
+
+  importSettings       Json?
+
+  webSubStatus         String    @default("INACTIVE") // INACTIVE, PENDING, ACTIVE, FAILED
+  webSubLeaseExpiresAt DateTime?
+  webSubSecret         String?
+
+  syncRuns             YoutubeSyncRun[]
+  importedVideos       YoutubeImportedVideo[]
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([channelId])
+  @@index([syncEnabled, nextSyncAt])
+}
+
+model YoutubeSyncRun {
+  id                 String              @id @default(cuid())
+  youtubeChannelId   String
+  youtubeChannel     YoutubeChannelSync  @relation(fields: [youtubeChannelId], references: [id], onDelete: Cascade)
+  status             String              // RUNNING, SUCCESS, FAILED
+  videosDiscovered   Int                 @default(0)
+  videosImported     Int                 @default(0)
+  videosUpdated      Int                 @default(0)
+  videosSkipped      Int                 @default(0)
+  videosFailed       Int                 @default(0)
+  errorMessage       String?
+  startedAt          DateTime            @default(now())
+  completedAt        DateTime?
+}
+
+model YoutubeImportedVideo {
+  id                 String              @id @default(cuid())
+  youtubeChannelId   String
+  youtubeChannel     YoutubeChannelSync  @relation(fields: [youtubeChannelId], references: [id], onDelete: Cascade)
+  videoId            String
+  videoTitle         String
+  videoUrl           String
+  publishedAt        DateTime?
+  sourceHash         String?
+  status             String              @default("IMPORTED") // IMPORTED, SKIPPED, EXCLUDED
+
+  localEpisodeId     String?
+  localEpisode       Episode?            @relation(fields: [localEpisodeId], references: [id], onDelete: SetNull)
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([youtubeChannelId, videoId])
+  @@index([videoId])
+}
+
 
 model EditorialSection {
   id         String               @id @default(cuid())

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { XMLParser } from "fast-xml-parser";
 
 export interface ParsedRssItem {
   guid: string;
@@ -8,10 +9,16 @@ export interface ParsedRssItem {
   enclosureUrl: string;
   enclosureType: string;
   enclosureLength: number | null;
-  durationSeconds: number;
+  durationSeconds: number; // 0 ou durée réelle
+  durationKnown?: boolean;
   seasonNumber: number | null;
-  episodeNumber: number | null; keywords: string[];
+  episodeNumber: number | null;
+  keywords: string[];
   mediaType: "AUDIO" | "VIDEO";
+  provider: "RSS" | "YOUTUBE";
+  thumbnailUrl?: string | null;
+  youtubeVideoId?: string;
+  youtubeChannelId?: string;
   fingerprint: string;
 }
 
@@ -22,74 +29,181 @@ export interface ParsedRssFeed {
   author: string | null;
   language: string;
   website: string | null;
+  provider: "RSS" | "YOUTUBE";
+  channelId?: string;
   items: ParsedRssItem[];
 }
 
 export class RssParserService {
+  private static parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    removeNSPrefix: false,
+    parseTagValue: false,
+    trimValues: true,
+  });
+
   static parseXml(xmlText: string): ParsedRssFeed {
-    if (!xmlText || !xmlText.includes("<rss") && !xmlText.includes("<feed")) {
-      throw new Error("RSS_PARSE_FAILED");
+    if (!xmlText || typeof xmlText !== "string") {
+      throw new Error("RSS_EMPTY_FEED: Le contenu du flux est vide.");
     }
 
-    // Extraction naïve & robuste regex pour éviter les dépendances lourdes
-    const titleMatch = xmlText.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
-    const descMatch = xmlText.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
-    const imageMatch = xmlText.match(/<itunes:image[^>]*href=["']([^"']+)["']/i) || xmlText.match(/<image>[\s\S]*?<url>(.*?)<\/url>/i);
-    const authorMatch = xmlText.match(/<itunes:author>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/itunes:author>/i);
-    const langMatch = xmlText.match(/<language>(.*?)<\/language>/i);
-    const linkMatch = xmlText.match(/<link>(.*?)<\/link>/i);
+    const trimmed = xmlText.trim();
+    if (!trimmed.includes("<rss") && !trimmed.includes("<feed")) {
+      throw new Error("RSS_INVALID_FORMAT: Ce fichier XML n'est ni un flux RSS valide ni un flux Atom.");
+    }
 
-    const channelTitle = titleMatch ? this.cleanText(titleMatch[1]) : "Podcast RSS";
-    const channelDesc = descMatch ? this.cleanText(descMatch[1]) : "";
-    const channelImage = imageMatch ? imageMatch[1].trim() : null;
-    const channelAuthor = authorMatch ? this.cleanText(authorMatch[1]) : null;
-    const channelLang = langMatch ? langMatch[1].trim().toLowerCase().substring(0, 2) : "fr";
-    const channelLink = linkMatch ? linkMatch[1].trim() : null;
+    let parsedObj: any;
+    try {
+      parsedObj = this.parser.parse(trimmed);
+    } catch (e: any) {
+      throw new Error(`RSS_PARSE_FAILED: Erreur d'analyse XML (${e?.message || "syntaxe invalide"}).`);
+    }
 
-    // Découper les items
-    const itemsRaw = xmlText.split(/<item>/i).slice(1);
+    // Détection Atom YouTube ou Atom standard
+    if (parsedObj.feed) {
+      return this.parseAtomFeed(parsedObj.feed);
+    }
+
+    // Flux RSS 2.0 standard
+    if (parsedObj.rss?.channel) {
+      return this.parseRssChannel(parsedObj.rss.channel);
+    }
+
+    throw new Error("RSS_UNKNOWN_SCHEMA: Structure de flux XML non reconnue.");
+  }
+
+  /**
+   * Analyse un flux Atom (spécialement adapté pour YouTube)
+   */
+  private static parseAtomFeed(feed: any): ParsedRssFeed {
+    const channelTitle = this.cleanText(feed.title || "Chaîne YouTube");
+    const channelAuthor = typeof feed.author?.name === "string" 
+      ? this.cleanText(feed.author.name) 
+      : (typeof feed["yt:channelId"] === "string" ? "YouTube" : null);
+
+    const channelId = feed["yt:channelId"] || (feed.id ? String(feed.id).replace(/^yt:channel:/, "") : undefined);
+    const channelLink = feed.link?.["@_href"] || feed.author?.uri || (channelId ? `https://www.youtube.com/channel/${channelId}` : null);
+
+    const rawEntries = Array.isArray(feed.entry) ? feed.entry : (feed.entry ? [feed.entry] : []);
     const items: ParsedRssItem[] = [];
 
-    for (const rawItem of itemsRaw) {
-      const itemXml = rawItem.split(/<\/item>/i)[0];
+    for (const entry of rawEntries) {
+      const videoId = entry["yt:videoId"] || (entry.id ? String(entry.id).replace(/^yt:video:/, "") : null);
+      if (!videoId) continue; // Ignorer les entrées sans identifiant vidéo
 
-      const itemTitleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
-      const itemGuidMatch = itemXml.match(/<guid[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/guid>/i);
-      const itemDescMatch = itemXml.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i) || itemXml.match(/<itunes:summary>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/itunes:summary>/i);
-      const itemPubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/i);
-      const itemEnclosureMatch = itemXml.match(/<enclosure[^>]*url=["']([^"']+)["'][^>]*>/i);
-      const itemEnclosureTypeMatch = itemXml.match(/<enclosure[^>]*type=["']([^"']+)["'][^>]*>/i);
-      const itemEnclosureLengthMatch = itemXml.match(/<enclosure[^>]*length=["']([^"']+)["'][^>]*>/i);
-      const itemDurationMatch = itemXml.match(/<itunes:duration>(.*?)<\/itunes:duration>/i);
-      const itemSeasonMatch = itemXml.match(/<itunes:season>(.*?)<\/itunes:season>/i);
-      const itemEpisodeMatch = itemXml.match(/<itunes:episode>(.*?)<\/itunes:episode>/i); const itemCategories = [...itemXml.matchAll(/<category[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/category>/gi)].map(m => m[1]); const itemItunesKeywordsMatch = itemXml.match(/<itunes:keywords>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/itunes:keywords>/i); const keywords = [...new Set([...itemCategories, ...(itemItunesKeywordsMatch ? itemItunesKeywordsMatch[1].split(',') : [])].map(k => k.trim()).filter(Boolean))];
+      const entryTitle = this.cleanText(entry.title || "Vidéo sans titre");
+      const mediaGroup = entry["media:group"] || {};
+      const desc = this.cleanText(mediaGroup["media:description"] || entry.summary || entry.content || "");
+      
+      const thumbUrl = mediaGroup["media:thumbnail"]?.["@_url"] || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      const pubDateRaw = entry.published || entry.updated;
+      const pubDate = pubDateRaw ? new Date(pubDateRaw) : null;
 
-      if (!itemEnclosureMatch) continue; // Ignorer les items sans fichier média
+      const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const guid = `yt:video:${videoId}`;
 
-      const itemTitle = itemTitleMatch ? this.cleanText(itemTitleMatch[1]) : "Épisode Sans Titre";
-      const enclosureUrl = itemEnclosureMatch[1].trim();
-      const guid = itemGuidMatch ? itemGuidMatch[1].trim() : enclosureUrl;
-      const pubDate = itemPubDateMatch ? new Date(itemPubDateMatch[1].trim()) : null;
-      const enclosureType = itemEnclosureTypeMatch ? itemEnclosureTypeMatch[1].trim() : "audio/mpeg";
-      const mediaType: "AUDIO" | "VIDEO" = enclosureType.includes("video") ? "VIDEO" : "AUDIO";
-      const durationSeconds = itemDurationMatch ? this.parseDuration(itemDurationMatch[1].trim()) : 1800;
+      // Durée uniquement si connue
+      let durationSeconds = 0;
+      let durationKnown = false;
+      if (entry["yt:duration"]?.["@_seconds"]) {
+        durationSeconds = parseInt(entry["yt:duration"]["@_seconds"], 10) || 0;
+        durationKnown = durationSeconds > 0;
+      }
 
-      // Fingerprint normalisé : sha256(itemTitle + pubDate + durationSeconds)
+      const fingerprintSource = `${entryTitle}_${pubDate ? pubDate.toISOString() : ""}_${videoId}`;
+      const fingerprint = crypto.createHash("sha256").update(fingerprintSource).digest("hex");
+
+      items.push({
+        guid,
+        title: entryTitle,
+        description: desc,
+        pubDate: pubDate && !isNaN(pubDate.getTime()) ? pubDate : null,
+        enclosureUrl: canonicalUrl,
+        enclosureType: "video/youtube",
+        enclosureLength: null,
+        durationSeconds,
+        durationKnown,
+        seasonNumber: null,
+        episodeNumber: null,
+        keywords: [],
+        mediaType: "VIDEO",
+        provider: "YOUTUBE",
+        thumbnailUrl: thumbUrl,
+        youtubeVideoId: videoId,
+        youtubeChannelId: channelId,
+        fingerprint,
+      });
+    }
+
+    return {
+      title: channelTitle,
+      description: "",
+      image: items[0]?.thumbnailUrl || null,
+      author: channelAuthor,
+      language: "fr",
+      website: channelLink,
+      provider: "YOUTUBE",
+      channelId,
+      items,
+    };
+  }
+
+  /**
+   * Analyse un flux RSS 2.0 audio/vidéo classique
+   */
+  private static parseRssChannel(channel: any): ParsedRssFeed {
+    const channelTitle = this.cleanText(channel.title || "Podcast RSS");
+    const channelDesc = this.cleanText(channel.description || "");
+    const channelImage = channel["itunes:image"]?.["@_href"] || channel.image?.url || null;
+    const channelAuthor = this.cleanText(channel["itunes:author"] || channel.managingEditor || "");
+    const channelLang = channel.language ? String(channel.language).trim().toLowerCase().slice(0, 2) : "fr";
+    const channelLink = typeof channel.link === "string" ? channel.link.trim() : null;
+
+    const rawItems = Array.isArray(channel.item) ? channel.item : (channel.item ? [channel.item] : []);
+    const items: ParsedRssItem[] = [];
+
+    for (const item of rawItems) {
+      const enclosure = item.enclosure;
+      const encUrl = enclosure?.["@_url"]?.trim();
+      if (!encUrl) continue; // Les épisodes RSS doivent avoir un fichier média
+
+      const itemTitle = this.cleanText(item.title || "Épisode sans titre");
+      const guid = item.guid?.["#text"] || (typeof item.guid === "string" ? item.guid : encUrl);
+      const desc = this.cleanText(item.description || item["itunes:summary"] || "");
+
+      const pubDateRaw = item.pubDate;
+      const pubDate = pubDateRaw ? new Date(pubDateRaw) : null;
+
+      const encType = enclosure?.["@_type"]?.trim() || "audio/mpeg";
+      const encLength = enclosure?.["@_length"] ? parseInt(enclosure["@_length"], 10) : null;
+      const mediaType: "AUDIO" | "VIDEO" = encType.toLowerCase().includes("video") ? "VIDEO" : "AUDIO";
+
+      const rawDuration = item["itunes:duration"];
+      const durationSeconds = rawDuration ? this.parseDuration(String(rawDuration).trim()) : 0;
+      const durationKnown = durationSeconds > 0;
+
+      const thumbUrl = item["itunes:image"]?.["@_href"] || null;
+
       const fingerprintSource = `${itemTitle}_${pubDate ? pubDate.toISOString() : ""}_${durationSeconds}`;
       const fingerprint = crypto.createHash("sha256").update(fingerprintSource).digest("hex");
 
       items.push({
         guid,
         title: itemTitle,
-        description: itemDescMatch ? this.cleanText(itemDescMatch[1]) : "",
+        description: desc,
         pubDate: pubDate && !isNaN(pubDate.getTime()) ? pubDate : null,
-        enclosureUrl,
-        enclosureType,
-        enclosureLength: itemEnclosureLengthMatch ? parseInt(itemEnclosureLengthMatch[1], 10) : null,
-        durationSeconds, keywords,
-        seasonNumber: itemSeasonMatch ? parseInt(itemSeasonMatch[1], 10) : null,
-        episodeNumber: itemEpisodeMatch ? parseInt(itemEpisodeMatch[1], 10) : null,
+        enclosureUrl: encUrl,
+        enclosureType: encType,
+        enclosureLength: isNaN(encLength as number) ? null : encLength,
+        durationSeconds,
+        durationKnown,
+        seasonNumber: item["itunes:season"] ? parseInt(item["itunes:season"], 10) : null,
+        episodeNumber: item["itunes:episode"] ? parseInt(item["itunes:episode"], 10) : null,
+        keywords: [],
         mediaType,
+        provider: "RSS",
+        thumbnailUrl: thumbUrl,
         fingerprint,
       });
     }
@@ -98,28 +212,37 @@ export class RssParserService {
       title: channelTitle,
       description: channelDesc,
       image: channelImage,
-      author: channelAuthor,
+      author: channelAuthor || null,
       language: channelLang,
       website: channelLink,
+      provider: "RSS",
       items,
     };
   }
 
-  private static cleanText(text: string): string {
+  private static cleanText(text: any): string {
+    if (!text || typeof text !== "string") return "";
     return text
       .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, "$1")
       .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/\s+/g, " ")
       .trim();
   }
 
   private static parseDuration(raw: string): number {
-    if (!raw) return 1800;
+    if (!raw) return 0;
     if (raw.includes(":")) {
       const parts = raw.split(":").map(Number);
       if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
       if (parts.length === 2) return parts[0] * 60 + parts[1];
     }
     const parsed = parseInt(raw, 10);
-    return isNaN(parsed) ? 1800 : parsed;
+    return isNaN(parsed) ? 0 : parsed;
   }
 }

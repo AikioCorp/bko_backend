@@ -64,7 +64,8 @@ export class EngagementController {
     try {
       const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
       const offset = req.query.offset === undefined ? 0 : Number(req.query.offset);
-      const result = await EngagementService.listComments(req.params.id, limit, offset);
+      const userId = (req as any).user?.id;
+      const result = await EngagementService.listComments(req.params.id, limit, offset, userId);
       return sendSuccess(res, result.comments, { total: result.total, limit, offset });
     } catch (error: any) {
       return sendError(res, error.message);
@@ -88,6 +89,47 @@ export class EngagementController {
       // For now, only the author can delete. Mods can be added later via roles.
       // E.g. const isMod = req.user.role === 'ADMIN' || req.user.role === 'MODERATOR';
       const result = await EngagementService.deleteComment(req.params.id, req.user.id);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async likeComment(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await EngagementService.likeComment(req.params.id, req.user.id);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async unlikeComment(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await EngagementService.unlikeComment(req.params.id, req.user.id);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async reactComment(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const { emoji } = req.body;
+      const result = await EngagementService.reactComment(req.params.id, req.user.id, emoji);
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async deleteCommentReaction(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await EngagementService.deleteCommentReaction(req.params.id, req.user.id);
       return sendSuccess(res, result);
     } catch (error: any) {
       return sendError(res, error.message);

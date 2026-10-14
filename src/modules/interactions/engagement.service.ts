@@ -1,6 +1,10 @@
 import { prisma } from "../../config/prisma.js";
 import { UserProfileService } from "../recommendations/user-profile.service.js";
 
+// Stores en mémoire pour likes et réactions sur les commentaires
+const commentLikesMap = new Map<string, Set<string>>(); // commentId -> Set<userId>
+const commentReactionsMap = new Map<string, Map<string, string>>(); // commentId -> Map<userId, emoji>
+
 export class EngagementService {
   // --- RATINGS ---
   static async ratePodcast(podcastId: string, userId: string, score: number) {
@@ -119,6 +123,8 @@ export class EngagementService {
     if (comment.userId === userId) {
       // L'auteur peut supprimer son commentaire complètement
       await prisma.comment.delete({ where: { id: commentId } });
+      commentLikesMap.delete(commentId);
+      commentReactionsMap.delete(commentId);
       return { action: "deleted" };
     }
 
@@ -148,7 +154,7 @@ export class EngagementService {
     throw new Error("Action non autorisée");
   }
 
-  static async listComments(episodeId: string, limit: number, offset: number) {
+  static async listComments(episodeId: string, limit: number, offset: number, userId?: string) {
     if (!Number.isInteger(limit) || limit < 1 || !Number.isInteger(offset) || offset < 0) {
       throw new Error("Pagination invalide");
     }
@@ -181,7 +187,124 @@ export class EngagementService {
       }
     });
 
-    return { comments, total };
+    // Enrichir avec likes et réactions
+    const enriched = comments.map((c) => {
+      const likesSet = commentLikesMap.get(c.id);
+      const likesCount = likesSet?.size ?? 0;
+      const userLiked = userId && likesSet ? likesSet.has(userId) : false;
+
+      const userReactions = commentReactionsMap.get(c.id);
+      const reactions: Record<string, number> = {};
+      if (userReactions) {
+        for (const emoji of userReactions.values()) {
+          reactions[emoji] = (reactions[emoji] ?? 0) + 1;
+        }
+      }
+      const userReaction = userId && userReactions ? (userReactions.get(userId) ?? null) : null;
+
+      return {
+        ...c,
+        likesCount,
+        userLiked,
+        reactions,
+        userReaction,
+      };
+    });
+
+    return { comments: enriched, total };
+  }
+
+  // --- COMMENT LIKES & REACTIONS ---
+  static async likeComment(commentId: string, userId: string) {
+    const comment = await prisma.comment.findUnique({ where: { id: commentId }, select: { id: true } });
+    if (!comment) throw new Error("Commentaire introuvable");
+
+    let set = commentLikesMap.get(commentId);
+    if (!set) {
+      set = new Set();
+      commentLikesMap.set(commentId, set);
+    }
+    set.add(userId);
+
+    return {
+      success: true,
+      commentId,
+      likesCount: set.size,
+      userLiked: true,
+    };
+  }
+
+  static async unlikeComment(commentId: string, userId: string) {
+    const set = commentLikesMap.get(commentId);
+    if (set) {
+      set.delete(userId);
+    }
+
+    return {
+      success: true,
+      commentId,
+      likesCount: set?.size ?? 0,
+      userLiked: false,
+    };
+  }
+
+  static async reactComment(commentId: string, userId: string, emoji: string) {
+    const comment = await prisma.comment.findUnique({ where: { id: commentId }, select: { id: true } });
+    if (!comment) throw new Error("Commentaire introuvable");
+
+    const validEmojis = ["❤️", "🔥", "😂", "👏", "💡", "🎙️"];
+    if (!validEmojis.includes(emoji)) {
+      throw new Error("Émotion non reconnue");
+    }
+
+    let userReactions = commentReactionsMap.get(commentId);
+    if (!userReactions) {
+      userReactions = new Map();
+      commentReactionsMap.set(commentId, userReactions);
+    }
+
+    const currentEmoji = userReactions.get(userId);
+    let finalEmoji: string | null = emoji;
+    if (currentEmoji === emoji) {
+      // Toggle off si on clique sur la même émotion
+      userReactions.delete(userId);
+      finalEmoji = null;
+    } else {
+      userReactions.set(userId, emoji);
+    }
+
+    const reactions: Record<string, number> = {};
+    for (const e of userReactions.values()) {
+      reactions[e] = (reactions[e] ?? 0) + 1;
+    }
+
+    return {
+      success: true,
+      commentId,
+      reactions,
+      userReaction: finalEmoji,
+    };
+  }
+
+  static async deleteCommentReaction(commentId: string, userId: string) {
+    const userReactions = commentReactionsMap.get(commentId);
+    if (userReactions) {
+      userReactions.delete(userId);
+    }
+
+    const reactions: Record<string, number> = {};
+    if (userReactions) {
+      for (const e of userReactions.values()) {
+        reactions[e] = (reactions[e] ?? 0) + 1;
+      }
+    }
+
+    return {
+      success: true,
+      commentId,
+      reactions,
+      userReaction: null,
+    };
   }
 
   static async updateCommentSettings(episodeId: string, allowComments: boolean, userId: string) {
