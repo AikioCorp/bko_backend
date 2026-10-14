@@ -188,7 +188,23 @@ export class AdvisorService {
     const rawOutput = data.output || data.text || "Désolé, je n'ai pas pu traiter ta demande.";
     const appUrl = (process.env.APP_URL || "http://x0jn9ljzszcjjvzmiltdx0qd.194.31.52.77.sslip.io").replace(/\/+$/, "");
     const domainPattern = /https?:\/\/(?:www\.)?(?:bamakopodcast\.(?:com|studio|ml)|c0mq60vovgz6xkdvi8hkyejk\.194\.31\.52\.77\.sslip\.io)/gi;
-    const normalizedOutput = typeof rawOutput === "string" ? rawOutput.replace(domainPattern, appUrl) : rawOutput;
+    let normalizedOutput = typeof rawOutput === "string" ? rawOutput.replace(domainPattern, appUrl) : rawOutput;
+
+    // Filtre de sécurité absolu : élimine toute fuite technique (Calling Execute..., SQL, JSON)
+    if (typeof normalizedOutput === "string") {
+      // Si la réponse n'est qu'un log technique de tool calling
+      if (/^\s*Calling\s+[\w_]+.*with\s+input:/i.test(normalizedOutput) || /Execute_a_SQL_query/i.test(normalizedOutput)) {
+        normalizedOutput = normalizedOutput
+          .replace(/Calling\s+[\w_]+(?:\s+with\s+input:[^}]*}?)?/gi, "")
+          .replace(/Execute_a_SQL_query[^\n]*/gi, "")
+          .replace(/\{\s*['"]?term['"]?\s*:[^}]*\}/gi, "")
+          .trim();
+
+        if (!normalizedOutput) {
+          normalizedOutput = "Je consulte le catalogue pour toi... Peux-tu me préciser quel genre de podcast ou de thème tu recherches ?";
+        }
+      }
+    }
 
     return {
       output: normalizedOutput,
