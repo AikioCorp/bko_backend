@@ -85,6 +85,30 @@ export class InteractionService {
     return saved.map((s) => s.episode);
   }
 
+  static async getLikedEpisodes(userId: string) {
+    const likes = await prisma.episodeLike.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        episode: {
+          include: {
+            podcast: { include: { country: true } },
+            mediaSources: true,
+          },
+        },
+      },
+    });
+    return likes.map((l) => l.episode);
+  }
+
+  static async getLikedEpisodeIds(userId: string) {
+    const likes = await prisma.episodeLike.findMany({
+      where: { userId },
+      select: { episodeId: true },
+    });
+    return likes.map((l) => l.episodeId);
+  }
+
   // --- PLAYBACK HISTORY & CONTINUE LISTENING ---
   static async updatePlaybackHistory(
     userId: string,

@@ -65,6 +65,26 @@ export class InteractionController {
     }
   }
 
+  static async getLikedEpisodes(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const liked = await InteractionService.getLikedEpisodes(req.user.id);
+      return sendSuccess(res, liked);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async getLikedEpisodeIds(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const ids = await InteractionService.getLikedEpisodeIds(req.user.id);
+      return sendSuccess(res, ids);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
   static async updatePlaybackHistory(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);

@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma.js";
+import { UserProfileService } from "../recommendations/user-profile.service.js";
 
 export class EngagementService {
   // --- RATINGS ---
@@ -59,15 +60,18 @@ export class EngagementService {
       throw new Error("Épisode introuvable");
     }
 
-    return prisma.episodeLike.upsert({
+    const result = await prisma.episodeLike.upsert({
       where: { episodeId_userId: { episodeId, userId } },
       update: {},
       create: { episodeId, userId }
     });
+    UserProfileService.invalidateProfile(userId).catch(() => {});
+    return result;
   }
 
   static async unlikeEpisode(episodeId: string, userId: string) {
     await prisma.episodeLike.deleteMany({ where: { episodeId, userId } });
+    UserProfileService.invalidateProfile(userId).catch(() => {});
     return true;
   }
 
