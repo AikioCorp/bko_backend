@@ -43,19 +43,22 @@ function emailShell(opts: {
   <title>${esc(opts.title)}</title>
   <style>
     :root { color-scheme: light only; supported-color-schemes: light only; }
-    body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    html, body { margin: 0 !important; padding: 0 !important; background-color: transparent !important; }
+    body { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    u + .body { background-color: transparent !important; }
+    div[style*="margin: 16px 0"] { margin: 0 !important; }
   </style>
 </head>
-<body bgcolor="#09090B" style="margin: 0; padding: 0; background-color: #09090B; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+<body style="margin: 0; padding: 0; background-color: transparent !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
   <!-- Preheader text for inbox preview -->
   <span style="display: none; font-size: 1px; color: #09090B; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden;">
     ${esc(opts.preheader)}
   </span>
 
-  <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#09090B" style="background-color: #09090B;">
+  <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: transparent !important; margin: 0; padding: 0;">
     <tr>
-      <td align="center" style="padding: 40px 16px;">
+      <td align="center" style="padding: 20px 8px; background-color: transparent !important;">
         <!-- Card Container -->
         <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="max-width: 540px; background-color: #141416; border: 1px solid #27272A; border-radius: 18px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);">
           <!-- Top Header -->
@@ -63,10 +66,12 @@ function emailShell(opts: {
             <td align="center" style="padding: 32px 32px 12px 32px;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td align="center" bgcolor="#1F1F23" style="background-color: #1F1F23; border: 1px solid #333338; border-radius: 100px; padding: 7px 18px;">
-                    <span style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #FFBF00; text-transform: uppercase;">
-                      ${esc(opts.badge ?? "BAMAKO PODCAST")}
-                    </span>
+                  <td align="center">
+                    <div style="display: inline-block; background-color: #1F1F23; border: 1px solid #333338; border-radius: 100px; padding: 6px 16px;">
+                      <span style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #FFBF00; text-transform: uppercase;">
+                        ${esc(opts.badge ?? "BAMAKO PODCAST")}
+                      </span>
+                    </div>
                   </td>
                 </tr>
               </table>
