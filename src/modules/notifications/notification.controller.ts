@@ -169,4 +169,91 @@ export class NotificationController {
       return fail(res, e);
     }
   }
+
+  /**
+   * Endpoint de synchronisation de la curation éditoriale (utilisable par n8n)
+   * Authentification : Soit header 'x-automation-secret', soit JWT d'un administrateur.
+   */
+  static async syncEditorialCuration(req: any, res: Response) {
+    try {
+      const secret = process.env.AUTOMATION_SECRET || process.env.JWT_SECRET;
+      const providedSecret = req.headers["x-automation-secret"];
+      const user = req.user;
+      const isAuthorized =
+        (secret && providedSecret === secret) ||
+        (user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN"));
+
+      if (!isAuthorized) {
+        return sendError(res, "Accès réservé au système d'automatisation ou aux administrateurs.", "UNAUTHORIZED", 403);
+      }
+
+      const schema = z.object({
+        title: z.string().min(1).max(200),
+        subtitle: z.string().optional().nullable(),
+        episodeIds: z.array(z.string()).min(1),
+        slug: z.string().default("selection-ia"),
+      });
+
+      const data = schema.parse(req.body);
+
+      // Upsert de la section éditoriale
+      const section = await prisma.editorialSection.upsert({
+        where: { slug: data.slug },
+        update: {
+          title: data.title,
+          subtitle: data.subtitle || null,
+          isActive: true,
+          updatedAt: new Date(),
+        },
+        create: {
+          id: "cm_sec_selection_ia",
+          title: data.title,
+          subtitle: data.subtitle || null,
+          slug: data.slug,
+          type: "EPISODE_ROW",
+          sourceMode: "AUTOMATIC",
+          position: 1,
+          isActive: true,
+          maxItems: 10,
+          isFixedPlacement: true,
+          priority: 100,
+          selectionStrategy: "CURATION_IA",
+        },
+      });
+
+      // Supprimer les anciens items de cette section
+      await prisma.editorialSectionItem.deleteMany({
+        where: { sectionId: section.id },
+      });
+
+      // Filtrer les épisodes existants en base pour garantir l'intégrité référentielle
+      const existingEpisodes = await prisma.episode.findMany({
+        where: { id: { in: data.episodeIds } },
+        select: { id: true },
+      });
+      const validIdSet = new Set(existingEpisodes.map((e) => e.id));
+      const validOrderedIds = data.episodeIds.filter((id) => validIdSet.has(id));
+
+      if (validOrderedIds.length > 0) {
+        await prisma.editorialSectionItem.createMany({
+          data: validOrderedIds.map((episodeId, index) => ({
+            sectionId: section.id,
+            episodeId,
+            position: index,
+          })),
+        });
+      }
+
+      return sendSuccess(res, {
+        sectionId: section.id,
+        slug: section.slug,
+        title: section.title,
+        subtitle: section.subtitle,
+        itemsCount: validOrderedIds.length,
+      }, "Section éditoriale synchronisée avec succès");
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
 }
+

@@ -185,6 +185,7 @@ router.post("/me/notifications/read", authenticateToken, NotificationController.
 router.post("/me/push-token", authenticateToken, NotificationController.registerPushToken);
 router.delete("/me/push-token", authenticateToken, NotificationController.unregisterPushToken);
 router.post("/notifications/campaign", optionalAuthenticateToken, NotificationController.sendCampaign);
+router.post("/editorial/curation", optionalAuthenticateToken, NotificationController.syncEditorialCuration);
 
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);
@@ -439,6 +440,8 @@ router.post("/episodes/:id/save", authenticateToken, InteractionController.saveE
 router.delete("/episodes/:id/save", authenticateToken, InteractionController.unsaveEpisode);
 router.get("/me/following", authenticateToken, InteractionController.getFollowedPodcasts);
 router.get("/me/saved", authenticateToken, InteractionController.getSavedEpisodes);
+router.get("/me/likes", authenticateToken, InteractionController.getLikedEpisodes);
+router.get("/me/liked-ids", authenticateToken, InteractionController.getLikedEpisodeIds);
 
 router.post("/me/history", authenticateToken, InteractionController.updatePlaybackHistory);
 router.get("/me/history", authenticateToken, InteractionController.getHistory);
