@@ -24,6 +24,7 @@ import { CollectionController } from "../../modules/collections/collection.contr
 import { ClaimController } from "../../modules/claims/claim.controller.js";
 import { TranscriptController } from "../../modules/transcripts/transcript.controller.js";
 import { NotificationController } from "../../modules/notifications/notification.controller.js";
+import { AdvisorController } from "../../modules/advisor/advisor.controller.js";
 import { CreatorManageController } from "../../modules/creator/creator-manage.controller.js";
 import { AdminRssController } from "../../modules/admin/admin-rss.controller.js";
 import { AdminYouTubeController } from "../../modules/admin/admin-youtube.controller.js";
@@ -190,6 +191,12 @@ router.post("/me/push-token", authenticateToken, NotificationController.register
 router.delete("/me/push-token", authenticateToken, NotificationController.unregisterPushToken);
 router.post("/notifications/campaign", optionalAuthenticateToken, NotificationController.sendCampaign);
 router.post("/editorial/curation", optionalAuthenticateToken, NotificationController.syncEditorialCuration);
+
+// --- CONSEILLER CULTUREL ALI (API SÉCURISÉE & M2M) ---
+router.post("/advisor/chat", optionalAuthenticateToken, AdvisorController.chat);
+router.get("/advisor/listening-context", authenticateToken, AdvisorController.getListeningContext);
+router.post("/advisor/favorites", authenticateToken, AdvisorController.addFavorite);
+router.post("/advisor/m2m/actions", AdvisorController.handleM2mAction);
 
 // --- MARCHÉS & DISPONIBILITÉ GÉOGRAPHIQUE ---
 router.get("/markets", MarketController.getPublicMarkets);
