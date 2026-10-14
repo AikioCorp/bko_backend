@@ -41,6 +41,24 @@ export class NotificationController {
     }
   }
 
+  static async delete(req: AuthenticatedRequest, res: Response) {
+    try {
+      const id = req.params.id;
+      if (!id) return sendError(res, "Identifiant requis", "BAD_REQUEST", 400);
+      return sendSuccess(res, await NotificationService.delete(req.user!.id, id));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async clearAll(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await NotificationService.clearAll(req.user!.id));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
   static async registerPushToken(req: AuthenticatedRequest, res: Response) {
     try {
       const { PushNotificationService } = await import("../../services/push-notification.service.js");

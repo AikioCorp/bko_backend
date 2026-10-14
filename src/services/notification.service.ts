@@ -192,6 +192,22 @@ export class NotificationService {
     return { updated: r.count };
   }
 
+  /** Supprime une notification par son identifiant pour l'utilisateur connecté */
+  static async delete(userId: string, id: string) {
+    const r = await prisma.notification.deleteMany({
+      where: { id, userId },
+    });
+    return { deleted: r.count };
+  }
+
+  /** Supprime toutes les notifications pour l'utilisateur connecté */
+  static async clearAll(userId: string) {
+    const r = await prisma.notification.deleteMany({
+      where: { userId },
+    });
+    return { deleted: r.count };
+  }
+
   /** Purge des notifications lues de plus de 90 jours (appelée périodiquement par le worker). */
   static async purgeOld() {
     const limit = new Date(Date.now() - 90 * 86400000);

@@ -182,6 +182,8 @@ router.delete("/admin/subscription-plans/:id", authenticateToken, SubscriptionCo
 router.get("/me/notifications", authenticateToken, NotificationController.list);
 router.get("/me/notifications/unread-count", authenticateToken, NotificationController.unreadCount);
 router.post("/me/notifications/read", authenticateToken, NotificationController.markRead);
+router.delete("/me/notifications/:id", authenticateToken, NotificationController.delete);
+router.delete("/me/notifications", authenticateToken, NotificationController.clearAll);
 router.post("/me/push-token", authenticateToken, NotificationController.registerPushToken);
 router.delete("/me/push-token", authenticateToken, NotificationController.unregisterPushToken);
 router.post("/notifications/campaign", optionalAuthenticateToken, NotificationController.sendCampaign);
