@@ -31,7 +31,7 @@ import { AdController } from "../../modules/ads/ad.controller.js";
 import { RecommendationController } from "../../modules/recommendations/recommendation.controller.js";
 import { SubscriptionController } from "../../modules/subscriptions/subscription.controller.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
-import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
+import { authenticateToken, optionalAuthenticateToken, requireAdmin } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
 import { prisma } from "../../config/prisma.js";
 
@@ -521,10 +521,10 @@ router.get("/languages/:code", ReferentialController.getLanguageByCode);
 router.get("/studio-offers", StudioOfferController.getActiveOffers); // Public
 
 // Admin routes
-router.get("/admin/studio-offers", authenticateToken, StudioOfferController.getAllOffers);
-router.post("/admin/studio-offers", authenticateToken, StudioOfferController.createOffer);
-router.patch("/admin/studio-offers/:id", authenticateToken, StudioOfferController.updateOffer);
-router.delete("/admin/studio-offers/:id", authenticateToken, StudioOfferController.deleteOffer);
+router.get("/admin/studio-offers", authenticateToken, requireAdmin, StudioOfferController.getAllOffers);
+router.post("/admin/studio-offers", authenticateToken, requireAdmin, StudioOfferController.createOffer);
+router.patch("/admin/studio-offers/:id", authenticateToken, requireAdmin, StudioOfferController.updateOffer);
+router.delete("/admin/studio-offers/:id", authenticateToken, requireAdmin, StudioOfferController.deleteOffer);
 
 
 // --- ENGAGEMENT (Likes, Ratings, Comments) ---

@@ -1,11 +1,9 @@
 import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../../config/prisma.js";
 
 export class StudioOfferController {
   // --- PUBLIC METHODS ---
-  // RǸcupǸrer toutes les offres actives pour le site public
+  // Récupérer toutes les offres actives pour le site public
   static async getActiveOffers(req: Request, res: Response) {
     try {
       const offers = await prisma.studioOffer.findMany({
@@ -19,7 +17,7 @@ export class StudioOfferController {
   }
 
   // --- ADMIN METHODS ---
-  // RǸcupǸrer toutes les offres (actives et inactives)
+  // Récupérer toutes les offres (actives et inactives)
   static async getAllOffers(req: Request, res: Response) {
     try {
       const offers = await prisma.studioOffer.findMany({
@@ -31,7 +29,7 @@ export class StudioOfferController {
     }
   }
 
-  // CrǸer une nouvelle offre
+  // Créer une nouvelle offre
   static async createOffer(req: Request, res: Response) {
     try {
       const { type, name, price, unit, description, features, isPopular, iconName, isActive, order } = req.body;
@@ -42,11 +40,11 @@ export class StudioOfferController {
           price,
           unit,
           description,
-          features,
+          features: Array.isArray(features) ? features : [],
           isPopular: isPopular || false,
           iconName,
-          isActive: isActive !== undefined ? isActive : true,
-          order: order || 0,
+          isActive: isActive !== undefined ? Boolean(isActive) : true,
+          order: order !== undefined ? Number(order) : 0,
         },
       });
       res.status(201).json({ success: true, data: newOffer });
@@ -55,7 +53,7 @@ export class StudioOfferController {
     }
   }
 
-  // Mettre  jour une offre
+  // Mettre à jour une offre
   static async updateOffer(req: Request, res: Response) {
     try {
       const { id } = req.params;
@@ -63,16 +61,16 @@ export class StudioOfferController {
       const updatedOffer = await prisma.studioOffer.update({
         where: { id },
         data: {
-          type,
-          name,
-          price,
-          unit,
-          description,
-          features,
-          isPopular,
-          iconName,
-          isActive,
-          order,
+          ...(type !== undefined ? { type } : {}),
+          ...(name !== undefined ? { name } : {}),
+          ...(price !== undefined ? { price } : {}),
+          ...(unit !== undefined ? { unit } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(features !== undefined ? { features: Array.isArray(features) ? features : [] } : {}),
+          ...(isPopular !== undefined ? { isPopular: Boolean(isPopular) } : {}),
+          ...(iconName !== undefined ? { iconName } : {}),
+          ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+          ...(order !== undefined ? { order: Number(order) } : {}),
         },
       });
       res.json({ success: true, data: updatedOffer });
@@ -86,7 +84,7 @@ export class StudioOfferController {
     try {
       const { id } = req.params;
       await prisma.studioOffer.delete({ where: { id } });
-      res.json({ success: true, message: "Offre supprimǸe avec succs" });
+      res.json({ success: true, message: "Offre supprimée avec succès" });
     } catch (e: any) {
       res.status(500).json({ success: false, message: e.message });
     }

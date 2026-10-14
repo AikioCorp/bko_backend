@@ -1627,6 +1627,14 @@ async function main() {
   }
 
   console.log("🎉 Ingestion terminée avec succès ! 55 Podcasts & Créateurs ingérés.");
+
+  // Initialisation des tarifs du Studio
+  try {
+    const { seedStudioOffers } = await import("../scripts/seed-studio-offers.js");
+    await seedStudioOffers();
+  } catch (err: any) {
+    console.warn("Notice: seedStudioOffers:", err.message);
+  }
 }
 
 main()
