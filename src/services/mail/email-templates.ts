@@ -17,8 +17,8 @@ function emailShell(opts: {
     ? `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" align="center" style="margin: 28px auto 16px auto;">
       <tr>
-        <td align="center" bgcolor="#FFBF00" style="background-color: #FFBF00; border-radius: 12px; padding: 0;">
-          <a href="${esc(opts.cta.url)}" target="_blank" style="display: inline-block; padding: 14px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 700; color: #09090B; text-decoration: none; border-radius: 12px; letter-spacing: 0.3px;">
+        <td align="center" bgcolor="#FFBF00" style="background-color: #FFBF00 !important; border-radius: 12px; padding: 0;">
+          <a href="${esc(opts.cta.url)}" target="_blank" style="display: inline-block; padding: 14px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 700; color: #09090B !important; text-decoration: none; border-radius: 12px; letter-spacing: 0.3px; background-color: #FFBF00 !important;">
             ${esc(opts.cta.label)} &rarr;
           </a>
         </td>
@@ -38,11 +38,11 @@ function emailShell(opts: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="light dark">
-  <meta name="supported-color-schemes" content="light dark">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
   <title>${esc(opts.title)}</title>
   <style>
-    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    :root { color-scheme: light only; supported-color-schemes: light only; }
     body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
   </style>
