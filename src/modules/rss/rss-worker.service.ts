@@ -10,6 +10,7 @@ import {
   treatmentToEpisodeStatus,
   RssImportSettings,
 } from "./rss-import-settings.js";
+import { NotificationService } from "../../services/notification.service.js";
 
 /** Intervalle de synchronisation automatique d'un flux en bonne santé. */
 export const RSS_SYNC_INTERVAL_MS = 60 * 60 * 1000;
@@ -213,7 +214,8 @@ export class RssWorkerService {
       // Import initial restreint (10 derniers / sélection) : les épisodes écartés sont mémorisés comme
       // « ignorés » (sans épisode local) pour ne jamais être importés par une synchronisation ultérieure.
       const alreadyKnown = await db.rssImportedEpisode.count({ where: { rssFeedId } });
-      if (alreadyKnown === 0 && settings.importScope !== "ALL") {
+      const isInitialImport = alreadyKnown === 0;
+      if (isInitialImport && settings.importScope !== "ALL") {
         const keep = pickInitialGuids(parsed.items, settings);
         const excluded = parsed.items.filter((i) => !keep.has(i.guid));
         if (excluded.length > 0) {
@@ -242,7 +244,7 @@ export class RssWorkerService {
         } else {
           seenGuids.add(item.guid);
           try {
-            const outcome = await this.processItem(db, now, rssFeedId, actualPodcastId, item, settings);
+            const outcome = await this.processItem(db, now, rssFeedId, actualPodcastId, item, settings, isInitialImport);
             counts[outcome]++;
           } catch (itemError: any) {
             counts.failed++;
@@ -303,7 +305,8 @@ export class RssWorkerService {
     rssFeedId: string,
     podcastId: string,
     item: ParsedRssItem,
-    settings: RssImportSettings
+    settings: RssImportSettings,
+    isInitialImport = false
   ): Promise<Outcome> {
     // L'adresse audio distante est lue telle quelle par les lecteurs : seul http(s) est accepté.
     if (!/^https?:\/\//i.test(item.enclosureUrl)) {
@@ -369,6 +372,9 @@ export class RssWorkerService {
       slug = `${slugBase}-${c}`;
     }
 
+    const status = treatmentToEpisodeStatus(settings.newEpisodesTreatment);
+    let createdEpisodeId: string | null = null;
+
     // 3. Création atomique de l'épisode, de sa source média (adresse distante conservée, aucun fichier
     //    copié) et de la liaison RssImportedEpisode : pas d'épisode orphelin si une étape échoue.
     await db.$transaction(async (tx) => {
@@ -380,7 +386,7 @@ export class RssWorkerService {
           description: item.description,
           durationSeconds: item.durationSeconds,
           publishedAt: item.pubDate || now(),
-          status: treatmentToEpisodeStatus(settings.newEpisodesTreatment),
+          status,
           creationSource: "RSS_IMPORT",
           isManuallyEdited: false,
           mediaSources: {
@@ -398,6 +404,8 @@ export class RssWorkerService {
         },
       });
 
+      createdEpisodeId = episode.id;
+
       await tx.rssImportedEpisode.create({
         data: {
           rssFeedId,
@@ -411,6 +419,11 @@ export class RssWorkerService {
         },
       });
     });
+
+    // Lors d'une synchronisation ultérieure (pas l'import initial), notifier les abonnés si l'épisode est publié directement
+    if (!isInitialImport && status === "PUBLISHED" && createdEpisodeId) {
+      void NotificationService.notifyFollowersOfEpisode(createdEpisodeId);
+    }
 
     return "imported";
   }

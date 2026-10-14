@@ -69,7 +69,7 @@ export class NotificationController {
         token: z.string().min(10),
       });
       const data = schema.parse(req.body);
-      await PushNotificationService.unregisterToken(data.token);
+      await PushNotificationService.unregisterToken(data.token, req.user!.id);
       return sendSuccess(res, { unregistered: true });
     } catch (e) {
       return fail(res, e);

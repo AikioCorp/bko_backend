@@ -121,11 +121,15 @@ export class PushNotificationService {
 
   /**
    * Désactive un token de push (par exemple au logout).
+   * Si userId est fourni, vérifie que le token appartient bien à cet utilisateur.
    */
-  static async unregisterToken(token: string): Promise<void> {
+  static async unregisterToken(token: string, userId?: string): Promise<void> {
     try {
       await prisma.pushToken.updateMany({
-        where: { token },
+        where: {
+          token,
+          ...(userId ? { device: { userId } } : {}),
+        },
         data: { isActive: false },
       });
     } catch (e: any) {
@@ -135,6 +139,8 @@ export class PushNotificationService {
 
   /**
    * Envoie une notification push à un ou plusieurs utilisateurs.
+   * Gère les lots par paquets de 500 tokens (limite imposée par Firebase Multicast)
+   * et exclut les utilisateurs suspendus.
    */
   static async sendToUsers(userIds: string[], payload: PushNotificationPayload): Promise<void> {
     const messaging = getMessagingClient();
@@ -144,12 +150,13 @@ export class PushNotificationService {
     }
 
     try {
-      // Récupérer les tokens actifs des utilisateurs cibles
+      // Récupérer les tokens actifs des utilisateurs cibles non suspendus
       const tokensRecords = await prisma.pushToken.findMany({
         where: {
           isActive: true,
           device: {
             userId: { in: userIds },
+            user: { isSuspended: false },
           },
         },
         select: {
@@ -157,65 +164,76 @@ export class PushNotificationService {
         },
       });
 
-      const tokens = tokensRecords.map((t) => t.token).filter(Boolean);
+      const tokens = [...new Set(tokensRecords.map((t) => t.token).filter(Boolean))];
       if (tokens.length === 0) return;
 
-      const message: MulticastMessage = {
-        tokens,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-          imageUrl: payload.imageUrl,
-        },
-        data: {
-          click_action: "FLUTTER_NOTIFICATION_CLICK",
-          route: payload.route || "/",
-          ...(payload.data || {}),
-        },
-        android: {
-          priority: "high",
+      // Découpage en lots de 500 tokens max (contrainte stricte de l'API Firebase Admin)
+      const BATCH_SIZE = 500;
+      let totalSuccess = 0;
+
+      for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
+        const batchTokens = tokens.slice(i, i + BATCH_SIZE);
+
+        const message: MulticastMessage = {
+          tokens: batchTokens,
           notification: {
-            sound: "default",
-            channelId: "bamako_podcast_channel",
-            clickAction: "FLUTTER_NOTIFICATION_CLICK",
+            title: payload.title,
+            body: payload.body,
+            imageUrl: payload.imageUrl,
           },
-        },
-        apns: {
-          payload: {
-            aps: {
+          data: {
+            click_action: "FLUTTER_NOTIFICATION_CLICK",
+            route: payload.route || "/",
+            link: payload.route || "/",
+            ...(payload.data || {}),
+          },
+          android: {
+            priority: "high",
+            notification: {
               sound: "default",
-              badge: 1,
+              channelId: "bamako_podcast_channel",
+              clickAction: "FLUTTER_NOTIFICATION_CLICK",
             },
           },
-        },
-      };
+          apns: {
+            payload: {
+              aps: {
+                sound: "default",
+                badge: 1,
+              },
+            },
+          },
+        };
 
-      const response = await messaging.sendEachForMulticast(message);
-      console.log(`[PushService] Envoyé avec succès : ${response.successCount}/${tokens.length}`);
+        const response = await messaging.sendEachForMulticast(message);
+        totalSuccess += response.successCount;
 
-      // Nettoyer les tokens expirés ou invalidés par Google/Apple
-      if (response.failureCount > 0) {
-        const failedTokens: string[] = [];
-        response.responses.forEach((resp: any, idx: number) => {
-          if (!resp.success) {
-            const errCode = resp.error?.code;
-            if (
-              errCode === "messaging/invalid-registration-token" ||
-              errCode === "messaging/registration-token-not-registered"
-            ) {
-              failedTokens.push(tokens[idx]);
+        // Nettoyer les tokens expirés ou invalidés par Google/Apple
+        if (response.failureCount > 0) {
+          const failedTokens: string[] = [];
+          response.responses.forEach((resp: any, idx: number) => {
+            if (!resp.success) {
+              const errCode = resp.error?.code;
+              if (
+                errCode === "messaging/invalid-registration-token" ||
+                errCode === "messaging/registration-token-not-registered"
+              ) {
+                failedTokens.push(batchTokens[idx]);
+              }
             }
-          }
-        });
-
-        if (failedTokens.length > 0) {
-          await prisma.pushToken.updateMany({
-            where: { token: { in: failedTokens } },
-            data: { isActive: false },
           });
-          console.log(`[PushService] ${failedTokens.length} token(s) invalide(s) désactivé(s).`);
+
+          if (failedTokens.length > 0) {
+            await prisma.pushToken.updateMany({
+              where: { token: { in: failedTokens } },
+              data: { isActive: false },
+            });
+            console.log(`[PushService] ${failedTokens.length} token(s) invalide(s) désactivé(s).`);
+          }
         }
       }
+
+      console.log(`[PushService] Envoyé avec succès : ${totalSuccess}/${tokens.length}`);
     } catch (e: any) {
       console.error("[PushService] Erreur lors de l'envoi push :", e.message);
     }

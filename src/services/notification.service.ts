@@ -56,7 +56,7 @@ export class NotificationService {
     await this.notify(ids, n, { email: opts.email });
   }
 
-  /** Prévient les abonnés (préférence "nouveaux épisodes" respectée, activée par défaut). */
+  /** Prévient les abonnés (préférences in-app, push et email respectées, activées par défaut). */
   static async notifyFollowersOfEpisode(episodeId: string) {
     try {
       const episode = await prisma.episode.findUnique({
@@ -66,10 +66,22 @@ export class NotificationService {
       if (!episode || episode.status !== "PUBLISHED") return;
 
       const link = `/podcasts/${episode.podcast.slug}/episodes/${episode.slug}`;
+
+      // Éviter les notifications répétées lorsqu'un épisode est republié ou qu'un traitement est relancé
+      const alreadyNotified = await prisma.notification.findFirst({
+        where: { link, type: "NEW_EPISODE" },
+        select: { id: true },
+      });
+      if (alreadyNotified) {
+        console.log(`[notification] Épisode déjà notifié aux abonnés : ${episodeId}`);
+        return;
+      }
+
       const where = {
         podcastId: episode.podcastId,
-        user: { OR: [{ notificationPreference: { is: null } }, { notificationPreference: { pushNewEpisodes: true } }] },
+        user: { isSuspended: false },
       };
+
       // Par lots, pour ne jamais charger tous les abonnés d'un gros podcast en mémoire.
       let cursor: { userId_podcastId: { userId: string; podcastId: string } } | undefined;
       for (;;) {
@@ -77,19 +89,73 @@ export class NotificationService {
           where,
           take: 1000,
           orderBy: { userId: "asc" },
-          select: { userId: true },
+          select: {
+            userId: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                isSuspended: true,
+                notificationPreference: {
+                  select: {
+                    pushNewEpisodes: true,
+                    emailNewEpisodes: true,
+                  },
+                },
+              },
+            },
+          },
           ...(cursor ? { cursor, skip: 1 } : {}),
         });
         if (batch.length === 0) break;
+
+        const activeUsers = batch.map((f) => f.user).filter((u) => u && !u.isSuspended);
+        if (activeUsers.length === 0) {
+          if (batch.length < 1000) break;
+          cursor = { userId_podcastId: { userId: batch[batch.length - 1].userId, podcastId: episode.podcastId } };
+          continue;
+        }
+
+        // 1. Notification interne (toujours créée pour les abonnés non suspendus)
         await prisma.notification.createMany({
-          data: batch.map((f) => ({
-            userId: f.userId,
+          data: activeUsers.map((u) => ({
+            userId: u.id,
             type: "NEW_EPISODE",
             title: `Nouvel épisode : ${episode.podcast.name}`,
             body: episode.title,
             link,
           })),
         });
+
+        // 2. Notification Push (si activée ou non explicitement désactivée)
+        const pushUserIds = activeUsers
+          .filter((u) => u.notificationPreference?.pushNewEpisodes !== false)
+          .map((u) => u.id);
+
+        if (pushUserIds.length > 0) {
+          void PushNotificationService.sendToUsers(pushUserIds, {
+            title: `Nouvel épisode : ${episode.podcast.name}`,
+            body: episode.title,
+            route: link,
+          });
+        }
+
+        // 3. Email (uniquement si explicitement activé ou par défaut activé)
+        const emailUsers = activeUsers.filter((u) => u.notificationPreference?.emailNewEpisodes === true);
+        if (emailUsers.length > 0) {
+          await Promise.all(
+            emailUsers.map((u) =>
+              MailService.enqueue(
+                Emails.notification(u.email, {
+                  title: `Nouvel épisode : ${episode.podcast.name}`,
+                  body: episode.title,
+                  link,
+                })
+              )
+            )
+          ).catch((err: any) => console.error("[notification] échec envoi email abonnés :", err.message));
+        }
+
         if (batch.length < 1000) break;
         cursor = { userId_podcastId: { userId: batch[batch.length - 1].userId, podcastId: episode.podcastId } };
       }
