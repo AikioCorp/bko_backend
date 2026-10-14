@@ -342,6 +342,8 @@ model User {
   PodcastRating PodcastRating[]
   EpisodeLike   EpisodeLike[]
   Comment       Comment[]
+  CommentLike   CommentLike[]
+  CommentReaction CommentReaction[]
 
   // Monétisation & Abonnements
   subscriptions       UserSubscription[]
@@ -1568,8 +1570,44 @@ model Comment {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   text      String   @db.Text
   isVisible Boolean  @default(true) // For moderation
+  parentId  String?
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  likes     CommentLike[]
+  reactions CommentReaction[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([episodeId, parentId])
+  @@index([episodeId, isVisible])
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([commentId, userId])
+  @@index([commentId])
+  @@index([userId])
+}
+
+model CommentReaction {
+  id        String   @id @default(cuid())
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([commentId, userId])
+  @@index([commentId])
+  @@index([userId])
 }
 
 model AdCampaign {

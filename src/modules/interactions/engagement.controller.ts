@@ -75,8 +75,8 @@ export class EngagementController {
   static async createComment(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
-      const { text } = req.body;
-      const result = await EngagementService.createComment(req.params.id, req.user.id, text);
+      const { text, parentId } = req.body;
+      const result = await EngagementService.createComment(req.params.id, req.user.id, text, parentId);
       return sendSuccess(res, result);
     } catch (error: any) {
       return sendError(res, error.message);
