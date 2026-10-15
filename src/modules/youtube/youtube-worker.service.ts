@@ -1,3 +1,4 @@
+import { YouTubeCatalogService } from "./youtube-catalog.service.js";
 import crypto from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
@@ -97,7 +98,8 @@ export class YouTubeWorkerService {
         payload.youtubeChannelSyncId,
         payload.podcastId,
         payload.selectedVideoIds,
-        job.jobType === "YOUTUBE_INITIAL_IMPORT"
+        job.jobType === "YOUTUBE_INITIAL_IMPORT",
+        payload.manual === true
       );
 
       await prisma.jobQueueItem.update({
@@ -130,12 +132,14 @@ export class YouTubeWorkerService {
     youtubeChannelSyncId: string,
     podcastId: string,
     selectedVideoIds?: string[],
-    isInitialImport = false
+    isInitialImport = false,
+    manual = false
   ) {
     const channelSync = await prisma.youtubeChannelSync.findUnique({
       where: { id: youtubeChannelSyncId },
     });
-    if (!channelSync) return;
+    if (!channelSync || channelSync.podcastId !== podcastId) return;
+    if(!isInitialImport&&!manual&&!channelSync.syncEnabled)return;
 
     const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });
     if (!podcast) return;
@@ -167,51 +171,44 @@ export class YouTubeWorkerService {
 
     const counts = { discovered: 0, imported: 0, updated: 0, skipped: 0, failed: 0 };
     const selectedSet = selectedVideoIds ? new Set(selectedVideoIds) : null;
+    const errors:string[]=[];
 
     try {
       // 2. Fetch du flux Atom YouTube
       let allItems: ParsedRssItem[] = [];
       try {
+        if(!YouTubeCatalogService.available || !selectedVideoIds) {
         const feedRes = await SsrfProtectionService.safeFetch(channelSync.feedUrl);
         if (feedRes.status === 200 && feedRes.text) {
           const parsed = RssParserService.parseXml(feedRes.text);
           allItems = parsed.items;
         }
+        }
       } catch (err: any) {
         console.warn(`[YouTube Worker] Lecture du flux Atom:`, err?.message);
       }
 
-      // Si l'import initial a des vidéos sélectionnées qui ne figurent pas dans les 15 du flux Atom,
-      // on récupère également l'onglet /videos pour traiter toutes les vidéos sélectionnées par l'utilisateur
-      const existingIds = new Set(allItems.map((i) => i.youtubeVideoId).filter(Boolean));
-      const missingSelected = selectedVideoIds ? selectedVideoIds.filter((id) => !existingIds.has(id)) : [];
-
-      if (missingSelected.length > 0 || (isInitialImport && allItems.length <= 15)) {
-        try {
-          const tabVideos = await YouTubeChannelService.fetchChannelVideosTab(
-            channelSync.channelId,
-            channelSync.customUrl || undefined
-          );
-          for (const tv of tabVideos) {
-            if (!existingIds.has(tv.videoId)) {
-              allItems.push({
-                title: tv.title,
-                description: "",
-                pubDate: tv.publishedAt || new Date(),
-                enclosureUrl: `https://www.youtube.com/watch?v=${tv.videoId}`,
-                durationSeconds: 0,
-                durationKnown: false,
-                thumbnailUrl: tv.thumbnailUrl,
-                youtubeVideoId: tv.videoId,
-                fingerprint: tv.videoId,
-              });
-              existingIds.add(tv.videoId);
-            }
-          }
-        } catch (e: any) {
-          console.warn("[YouTube Worker] Récupération de l'onglet vidéos étendu:", e?.message);
+      if(YouTubeCatalogService.available){
+        if(selectedVideoIds){
+          allItems=await YouTubeCatalogService.videos(selectedVideoIds,channelSync.channelId);
+          if(allItems.length!==new Set(selectedVideoIds).size)throw new Error("VIDEOS_UNAVAILABLE: Certaines vidéos sélectionnées ne sont plus accessibles. Actualisez la liste.");
+        }else{
+          // Catch up after an outage even if more than 15 videos were published.
+          const since=new Date(channelSync.lastSuccessfulSyncAt || settings.futureSince || channelSync.createdAt).getTime();
+          let pageToken:string|undefined;const seen=new Set<string>();const collected=new Map<string,ParsedRssItem>();
+          do{
+            const page=await YouTubeCatalogService.page(channelSync.channelId,pageToken);
+            for(const item of page.items)collected.set(item.youtubeVideoId!,item);
+            const hasOlder=page.items.some(item=>item.pubDate && item.pubDate.getTime()<=since);
+            pageToken=!hasOlder && page.items.length ? page.nextPageToken || undefined : undefined;
+            if(pageToken){if(seen.has(pageToken))throw new Error("YOUTUBE_PAGINATION_ERROR: Actualisez la synchronisation.");seen.add(pageToken);}
+          }while(pageToken);
+          allItems=Array.from(collected.values());
         }
+      }else if(selectedVideoIds?.some(id=>!allItems.some(i=>i.youtubeVideoId===id))){
+        throw new Error("YOUTUBE_API_KEY_REQUIRED: La sélection contient des archives absentes du flux récent. Configurez la clé YouTube serveur puis réessayez.");
       }
+      if(!allItems.length)throw new Error("YOUTUBE_EMPTY_SOURCE: Aucune vidéo accessible. Vérifiez la chaîne et réessayez.");
 
       counts.discovered = allItems.length;
 
@@ -229,12 +226,16 @@ export class YouTubeWorkerService {
           continue;
         }
 
-        // Si ce n'est pas l'import initial et que la chaîne a un scope "SELECT",
-        // ne pas importer automatiquement les nouvelles vidéos non désirées
-        if (!isInitialImport && settings.importScope === "SELECT") {
-          counts.skipped++;
-          continue;
+        // An initial selection never restricts future uploads. Only import newly published
+        // videos automatically; existing imports may still receive metadata updates.
+        if(!isInitialImport){
+          const cutoff=new Date(settings.futureSince || channelSync.createdAt).getTime();
+          if(!item.pubDate || item.pubDate.getTime()<=cutoff){
+            const existing=await prisma.youtubeImportedVideo.findUnique({where:{youtubeChannelId_videoId:{youtubeChannelId:channelSync.id,videoId}}});
+            if(!existing){counts.skipped++;continue;}
+          }
         }
+        if((item as any).embeddable===false){counts.failed++;errors.push(videoId+": intégration YouTube indisponible");continue;}
 
         // Filtrage des Shorts si excludeShorts est actif (par défaut true)
         const isShort =
@@ -252,8 +253,8 @@ export class YouTubeWorkerService {
         const titleLower = item.title.toLowerCase();
         const descLower = item.description.toLowerCase();
 
-        if (settings.filterKeywords && settings.filterKeywords.length > 0) {
-          const matchInc = settings.filterKeywords.some(
+        if ((settings.filterKeywords || settings.includeKeywords)?.length) {
+          const matchInc = (settings.filterKeywords || settings.includeKeywords || []).some(
             (k) => titleLower.includes(k.toLowerCase()) || descLower.includes(k.toLowerCase())
           );
           if (!matchInc) {
@@ -284,6 +285,7 @@ export class YouTubeWorkerService {
         } catch (itemErr: any) {
           console.error(`[YouTube Worker] Erreur traitement vidéo ${videoId}:`, itemErr.message);
           counts.failed++;
+          errors.push(videoId+": "+String(itemErr.message||"Import impossible").slice(0,150));
         }
       }
 
@@ -293,7 +295,8 @@ export class YouTubeWorkerService {
       await prisma.youtubeSyncRun.update({
         where: { id: syncRun.id },
         data: {
-          status: "SUCCESS",
+          status: counts.failed ? "PARTIAL" : "SUCCESS",
+          errorMessage: errors.length?errors.join("\n").slice(0,3000):null,
           completedAt: new Date(),
           videosDiscovered: counts.discovered,
           videosImported: counts.imported,
@@ -306,11 +309,11 @@ export class YouTubeWorkerService {
       await prisma.youtubeChannelSync.update({
         where: { id: channelSync.id },
         data: {
-          syncStatus: channelSync.syncEnabled ? "IDLE" : "PAUSED",
+          syncStatus: counts.failed ? "ERROR" : channelSync.syncEnabled ? "IDLE" : "PAUSED",
+          errorMessage: errors.length?errors.join("\n").slice(0,3000):null,
           lastSyncAt: now,
-          lastSuccessfulSyncAt: now,
+          ...(counts.failed===0?{lastSuccessfulSyncAt:now}:{}),
           nextSyncAt: nextSync,
-          errorMessage: null,
         },
       });
     } catch (err: any) {

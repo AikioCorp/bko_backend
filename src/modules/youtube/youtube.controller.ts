@@ -16,7 +16,8 @@ export class YouTubeController {
       if (!url) {
         return sendError(res, "Veuillez fournir une URL de chaîne ou un identifiant YouTube.", "BAD_REQUEST", 400);
       }
-      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId);
+      if(req.body.podcastId){const member=await prisma.podcastMember.findUnique({where:{podcastId_userId:{podcastId:req.body.podcastId,userId:req.user!.id}}});if(!member)return sendError(res,"Vous n’avez pas accès à cette émission.","FORBIDDEN",403);}
+      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken);
       return sendSuccess(res, data, "Chaîne YouTube analysée.");
     } catch (err: any) {
       return sendError(res, err.message || "Impossible d'analyser cette chaîne YouTube.", "YOUTUBE_ERROR", 400);
@@ -170,8 +171,8 @@ export class YouTubeController {
       }
 
       // Si un secret webhook est configuré, vérifier la signature HMAC-SHA1
-      if (syncRecord.webSubSecret && signature) {
-        const validSig = YouTubeWebSubService.verifySignature(rawBody, signature, syncRecord.webSubSecret);
+      if (syncRecord.webSubSecret) {
+        const validSig = YouTubeWebSubService.verifySignature(rawBody, signature || "", syncRecord.webSubSecret);
         if (!validSig) {
           console.warn(`[WebSub] Signature invalide reçue pour la chaîne ${channelId}`);
           return res.status(403).send("Invalid signature");

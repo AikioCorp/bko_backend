@@ -1,3 +1,5 @@
+import { YouTubeCatalogService } from "./youtube-catalog.service.js";
+import { z } from "zod";
 import crypto from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { SsrfProtectionService } from "../../services/ssrf-protection.service.js";
@@ -7,6 +9,10 @@ import { YouTubeWebSubService } from "./youtube-websub.service.js";
 
 export interface YouTubeImportSettings {
   autoPublish: boolean;
+  autoSyncFuture?: boolean;
+  initialImportMode?: "SELECT" | "FUTURE_ONLY";
+  futureSince?: string;
+  includeKeywords?: string[];
   filterKeywords?: string[];
   excludeKeywords?: string[];
   excludeShorts?: boolean;
@@ -130,151 +136,27 @@ export class YouTubeChannelService {
   /**
    * Résout une chaîne YouTube et prévisualise ses vidéos récentes disponibles dans le flux Atom et l'onglet Vidéos.
    */
-  static async previewChannel(rawInput: string, podcastId?: string) {
-    const resolved = await YouTubeResolverService.resolveChannel(rawInput);
-    
-    // Récupérer en parallèle : le flux Atom (15 vidéos récentes avec dates) et l'onglet /videos (60 vidéos régulières, sans Shorts)
-    const [feedResult, channelVideos] = await Promise.all([
-      SsrfProtectionService.safeFetch(resolved.feedUrl)
-        .then((res) => RssParserService.parseXml(res.text))
-        .catch(() => ({ items: [] as ParsedRssItem[] })),
-      this.fetchChannelVideosTab(resolved.channelId, resolved.customUrl),
-    ]);
-
-    // Combiner les deux sources de façon intelligente :
-    // 1. D'abord les vidéos de l'onglet /videos (qui exclut nativement les Shorts)
-    // 2. Compléter ou fusionner avec les métadonnées riches de l'Atom feed (dates de publication, descriptions)
-    const feedItemMap = new Map<string, ParsedRssItem>();
-    feedResult.items.forEach((item) => {
-      if (item.youtubeVideoId) feedItemMap.set(item.youtubeVideoId, item);
-    });
-
-    const regularVideoIds = new Set<string>();
-    const combinedVideos: Array<{
-      videoId: string;
-      title: string;
-      description: string;
-      publishedAt: Date | null;
-      thumbnailUrl: string;
-      canonicalUrl: string;
-      durationLabel?: string;
-      durationSeconds: number | null;
-      isLikelyShort: boolean;
-    }> = [];
-
-    // Ajouter toutes les vidéos de l'onglet /videos
-    for (const v of channelVideos) {
-      regularVideoIds.add(v.videoId);
-      const feedItem = feedItemMap.get(v.videoId);
-      combinedVideos.push({
-        videoId: v.videoId,
-        title: v.title || feedItem?.title || "Vidéo YouTube",
-        description: feedItem?.description ? feedItem.description.slice(0, 300) : "",
-        publishedAt: feedItem?.pubDate || null,
-        thumbnailUrl: v.thumbnailUrl || feedItem?.thumbnailUrl || `https://i1.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
-        canonicalUrl: `https://www.youtube.com/watch?v=${v.videoId}`,
-        durationLabel: v.durationLabel,
-        durationSeconds: feedItem?.durationKnown ? feedItem.durationSeconds : null,
-        isLikelyShort: false, // Provient de l'onglet /videos, donc vidéo normale
-      });
+  static async previewChannel(rawInput: string, podcastId?: string, pageToken?: string) {
+    const resolved=await YouTubeResolverService.resolveChannel(rawInput);
+    let items:any[],nextPageToken:string|null=null,totalResults:number|null=null;
+    if(YouTubeCatalogService.available){const page=await YouTubeCatalogService.page(resolved.channelId,pageToken);items=page.items;nextPageToken=page.nextPageToken;totalResults=page.totalResults;}
+    else {
+      if(pageToken)throw new Error("YOUTUBE_API_KEY_REQUIRED: Une clé YouTube serveur est nécessaire pour les archives.");
+      const feed=await SsrfProtectionService.safeFetch(resolved.feedUrl);
+      if(feed.status!==200)throw new Error("YOUTUBE_FEED_UNAVAILABLE: Impossible de charger les vidéos récentes.");
+      items=RssParserService.parseXml(feed.text).items;
     }
+    const ids=items.map(i=>i.youtubeVideoId).filter(Boolean);
+    const imported=podcastId?await prisma.youtubeImportedVideo.findMany({where:{videoId:{in:ids},youtubeChannel:{podcastId}},select:{videoId:true,localEpisodeId:true}}):[];
+    const map=new Map(imported.map(i=>[i.videoId,i.localEpisodeId]));
+    const videos=items.map(i=>({videoId:i.youtubeVideoId,youtubeVideoId:i.youtubeVideoId,title:i.title,description:i.description,publishedAt:i.pubDate,thumbnailUrl:i.thumbnailUrl,canonicalUrl:i.enclosureUrl,durationSeconds:i.durationKnown?i.durationSeconds:null,durationLabel:i.durationKnown?this.formatDuration(i.durationSeconds):"Durée inconnue",embeddable:i.embeddable??null,isLikelyShort:/#shorts?\b/i.test(i.title+" "+i.description),alreadyImported:map.has(i.youtubeVideoId),isAlreadyImported:map.has(i.youtubeVideoId),localEpisodeId:map.get(i.youtubeVideoId)||null}));
+    return {channel:resolved,hasApiKey:YouTubeCatalogService.available,source:YouTubeCatalogService.available?"API":"RECENT_FEED",nextPageToken,totalResults,videosCount:videos.length,videos,items:videos,note:YouTubeCatalogService.available?"Vidéos chargées depuis l’API YouTube. Parcourez les pages pour retrouver les anciennes vidéos.":"Vidéos récentes uniquement : ce flux ne contient pas toute la chaîne. Configurez la clé YouTube du serveur pour parcourir les archives."};
+  }
 
-    // Ajouter les éventuelles vidéos de l'Atom feed non encore présentes
-    for (const item of feedResult.items) {
-      const vid = item.youtubeVideoId;
-      if (!vid || regularVideoIds.has(vid)) continue;
-
-      const isShort =
-        item.enclosureUrl.includes("/shorts/") ||
-        (item.durationKnown && item.durationSeconds > 0 && item.durationSeconds <= 60) ||
-        /#shorts?\b/i.test(item.title) ||
-        /#shorts?\b/i.test(item.description || "");
-
-      combinedVideos.push({
-        videoId: vid,
-        title: item.title,
-        description: item.description ? item.description.slice(0, 300) : "",
-        publishedAt: item.pubDate,
-        thumbnailUrl: item.thumbnailUrl,
-        canonicalUrl: item.enclosureUrl,
-        durationSeconds: item.durationKnown ? item.durationSeconds : null,
-        durationLabel: item.durationKnown ? this.formatDuration(item.durationSeconds) : undefined,
-        isLikelyShort: isShort,
-      });
-    }
-
-    // Vérifier les vidéos déjà importées dans Bamako Podcast
-    const allVideoIds = combinedVideos.map((v) => v.videoId);
-    const alreadyImported = await prisma.youtubeImportedVideo.findMany({
-      where: { videoId: { in: allVideoIds } },
-      select: { videoId: true, localEpisodeId: true },
-    });
-    const importedMap = new Map(alreadyImported.map((a) => [a.videoId, a.localEpisodeId]));
-
-    // Enrichissement par API officielle si la clé serveur est configurée
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    const enrichedDurations = new Map<string, { durationSeconds: number; embeddable: boolean }>();
-
-    if (apiKey && allVideoIds.length > 0) {
-      try {
-        const idsParam = allVideoIds.slice(0, 50).join(",");
-        const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,status&id=${idsParam}&key=${apiKey}`;
-        const apiRes = await fetch(apiUrl);
-        if (apiRes.ok) {
-          const apiData = await apiRes.json();
-          for (const item of apiData.items || []) {
-            const sec = this.parseIsoDuration(item.contentDetails?.duration);
-            const embeddable = item.status?.embeddable !== false;
-            enrichedDurations.set(item.id, { durationSeconds: sec, embeddable });
-          }
-        }
-      } catch {
-        // En cas d'erreur de quota ou réseau, on continue avec les données du flux
-      }
-    }
-
-    const videos = combinedVideos.map((v) => {
-      const enriched = enrichedDurations.get(v.videoId);
-      const isAlready = importedMap.has(v.videoId);
-      const durSec = enriched ? enriched.durationSeconds : v.durationSeconds;
-      const isLikelyShort = v.isLikelyShort || (enriched ? enriched.durationSeconds <= 60 : false);
-
-      return {
-        videoId: v.videoId,
-        youtubeVideoId: v.videoId,
-        title: v.title,
-        description: v.description,
-        publishedAt: v.publishedAt,
-        thumbnailUrl: v.thumbnailUrl,
-        canonicalUrl: v.canonicalUrl,
-        duration: durSec,
-        durationSeconds: durSec,
-        durationLabel: enriched
-          ? this.formatDuration(enriched.durationSeconds)
-          : v.durationLabel || (durSec ? this.formatDuration(durSec) : "Durée inconnue"),
-        isLikelyShort,
-        embeddable: enriched ? enriched.embeddable : true,
-        alreadyImported: isAlready,
-        isAlreadyImported: isAlready,
-        localEpisodeId: importedMap.get(v.videoId) || null,
-      };
-    });
-
-    const regularVideosCount = videos.filter((v) => !v.isLikelyShort).length;
-    const shortsCount = videos.filter((v) => v.isLikelyShort).length;
-
-    return {
-      channel: resolved,
-      hasApiKey: !!apiKey,
-      videosCount: videos.length,
-      regularVideosCount,
-      shortsCount,
-      videos,
-      items: videos,
-      note: apiKey
-        ? "Durées et intégrations vérifiées via YouTube Data API v3."
-        : `Aperçu étendu : ${videos.length} vidéos trouvées (${regularVideosCount} épisodes complets, ${shortsCount} Shorts).`,
-    };
+  static normalizeSettings(input:any={},previous:any={}):YouTubeImportSettings {
+    const schema=z.object({autoPublish:z.boolean().optional(),autoSyncFuture:z.boolean().optional(),excludeShorts:z.boolean().optional(),keepManualEdits:z.boolean().optional(),filterKeywords:z.array(z.string().trim().min(1).max(100)).max(30).optional(),includeKeywords:z.array(z.string().trim().min(1).max(100)).max(30).optional(),excludeKeywords:z.array(z.string().trim().min(1).max(100)).max(30).optional(),initialImportMode:z.enum(["SELECT","FUTURE_ONLY"]).optional(),importScope:z.enum(["ALL","LAST_10","SELECT"]).optional(),futureSince:z.string().datetime().optional()});
+    const parsed=schema.parse(input);
+    return {autoPublish:false,autoSyncFuture:true,excludeShorts:true,keepManualEdits:true,importScope:"SELECT",excludeKeywords:[],...previous,...parsed,filterKeywords:parsed.filterKeywords??parsed.includeKeywords??previous.filterKeywords??previous.includeKeywords??[]};
   }
 
   /**
@@ -309,18 +191,17 @@ export class YouTubeChannelService {
     const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });
     if (!podcast) throw new Error("PODCAST_NOT_FOUND: Émission introuvable.");
 
+    if(!/^UC[\w-]{22}$/.test(payload.channelId))throw new Error("INVALID_CHANNEL_ID");
+    const selection=z.array(z.string().regex(/^[\w-]{11}$/)).max(500).parse(payload.selectedVideoIds??[]);
+    const importSettings=this.normalizeSettings(payload.settings);
+    const futureOnly=importSettings.initialImportMode==="FUTURE_ONLY";
+    if(!futureOnly&&!selection.length)throw new Error("EMPTY_SELECTION: Sélectionnez au moins une vidéo, ou choisissez de suivre uniquement les prochaines publications.");
+    const previous=await prisma.youtubeChannelSync.findUnique({where:{podcastId}});
+    if(previous && previous.channelId!==payload.channelId)throw new Error("CHANNEL_ALREADY_CONNECTED: Déconnectez la chaîne actuelle avant d’en associer une autre.");
+    const canonical=await YouTubeResolverService.resolveChannel(payload.channelId);
+    payload={...payload,channelTitle:canonical.title,feedUrl:canonical.feedUrl,uploadsPlaylistId:canonical.uploadsPlaylistId};
+    importSettings.futureSince=(previous?.importSettings as any)?.futureSince || previous?.createdAt?.toISOString() || new Date().toISOString();
     const webSubSecret = crypto.randomBytes(24).toString("hex");
-
-    const defaultSettings: YouTubeImportSettings = {
-      autoPublish: false, // Brouillon par défaut par sécurité
-      excludeShorts: true, // Exclusion des Shorts par défaut
-      importScope: payload.selectedVideoIds && payload.selectedVideoIds.length > 0 ? "SELECT" : "ALL",
-      keepManualEdits: true,
-      filterKeywords: [],
-      excludeKeywords: [],
-    };
-
-    const importSettings = { ...defaultSettings, ...(payload.settings || {}) };
 
     const channelSync = await prisma.youtubeChannelSync.upsert({
       where: { podcastId },
@@ -333,8 +214,9 @@ export class YouTubeChannelService {
         customUrl: payload.customUrl || null,
         uploadsPlaylistId: payload.uploadsPlaylistId || `UU${payload.channelId.slice(2)}`,
         feedUrl: payload.feedUrl,
-        syncEnabled: true,
-        syncStatus: "IDLE",
+        syncEnabled: importSettings.autoSyncFuture !== false,
+        nextSyncAt: importSettings.autoSyncFuture !== false ? new Date() : null,
+        syncStatus: futureOnly ? (importSettings.autoSyncFuture !== false ? "IDLE" : "PAUSED") : "PENDING",
         errorMessage: null,
         importSettings: importSettings as any,
         webSubSecret,
@@ -349,30 +231,31 @@ export class YouTubeChannelService {
         customUrl: payload.customUrl || null,
         uploadsPlaylistId: payload.uploadsPlaylistId || `UU${payload.channelId.slice(2)}`,
         feedUrl: payload.feedUrl,
-        syncEnabled: true,
-        syncStatus: "IDLE",
+        syncEnabled: importSettings.autoSyncFuture !== false,
+        nextSyncAt: importSettings.autoSyncFuture !== false ? new Date() : null,
+        syncStatus: futureOnly ? (importSettings.autoSyncFuture !== false ? "IDLE" : "PAUSED") : "PENDING",
         importSettings: importSettings as any,
         webSubSecret,
       },
     });
 
     // Enclencher l'abonnement WebSub en tâche de fond
-    void YouTubeWebSubService.subscribe(payload.channelId, webSubSecret).then(async (res) => {
+    if(importSettings.autoSyncFuture !== false) void YouTubeWebSubService.subscribe(payload.channelId, webSubSecret).then(async (res) => {
       await prisma.youtubeChannelSync.update({
         where: { id: channelSync.id },
         data: { webSubStatus: res.success ? "ACTIVE" : "FAILED" },
       });
-    });
+    }).catch(err=>console.warn("[YouTube WebSub]",err.message));
 
     // Ajouter la tâche d'importation initiale à la file d'attente JobQueueItem
-    await prisma.jobQueueItem.create({
+    if(!futureOnly) await prisma.jobQueueItem.create({
       data: {
         queueName: "youtube-importer",
         jobType: "YOUTUBE_INITIAL_IMPORT",
         payload: {
           youtubeChannelSyncId: channelSync.id,
           podcastId,
-          selectedVideoIds: payload.selectedVideoIds,
+          selectedVideoIds: selection,
         },
         status: "PENDING",
       },
@@ -380,8 +263,9 @@ export class YouTubeChannelService {
 
     return {
       channelSyncId: channelSync.id,
-      syncStatus: "RUNNING",
-      message: "Chaîne YouTube connectée. L'importation des vidéos est en cours d'exécution en arrière-plan.",
+      syncStatus: futureOnly ? "IDLE" : "PENDING",
+      selectedCount: selection.length,
+      message: futureOnly ? "Chaîne connectée. Aucune ancienne vidéo ne sera importée." : "Importation placée en file d’attente. Consultez le suivi pour connaître le résultat.",
     };
   }
 
@@ -404,6 +288,7 @@ export class YouTubeChannelService {
         payload: {
           youtubeChannelSyncId: channel.id,
           podcastId,
+          manual: true,
         },
         status: "PENDING",
       },
@@ -431,13 +316,14 @@ export class YouTubeChannelService {
     if (!channel) throw new Error("YOUTUBE_NOT_CONNECTED");
 
     const currentSettings = (channel.importSettings as any) || {};
-    const updatedSettings = data.settings ? { ...currentSettings, ...data.settings } : currentSettings;
+    const updatedSettings = this.normalizeSettings(data.settings || {}, currentSettings);
 
     const updated = await prisma.youtubeChannelSync.update({
       where: { podcastId },
       data: {
-        syncEnabled: data.syncEnabled !== undefined ? data.syncEnabled : channel.syncEnabled,
-        importSettings: updatedSettings,
+        syncEnabled: data.syncEnabled !== undefined ? z.boolean().parse(data.syncEnabled) : channel.syncEnabled,
+        ...(data.syncEnabled===true?{nextSyncAt:new Date()}:data.syncEnabled===false?{nextSyncAt:null}:{}),
+        importSettings: updatedSettings as any,
         syncStatus: data.syncEnabled === false ? "PAUSED" : (channel.syncStatus === "PAUSED" ? "IDLE" : channel.syncStatus),
       },
     });
@@ -533,89 +419,19 @@ export class YouTubeChannelService {
   /**
    * Importation historique des anciennes vidéos par pagination de l'API YouTube Data v3.
    */
-  static async historicalImport(
-    userId: string,
-    podcastId: string,
-    options: { pageToken?: string; selectedVideoIds?: string[]; autoPublish?: boolean }
-  ) {
-    const member = await prisma.podcastMember.findUnique({
-      where: { podcastId_userId: { podcastId, userId } },
-    });
-    if (!member || (member.role !== "OWNER" && member.role !== "ADMIN")) {
-      throw new Error("FORBIDDEN");
+  static async historicalImport(userId:string,podcastId:string,options:{pageToken?:string;selectedVideoIds?:string[]},isAdmin=false) {
+    if(!isAdmin){const member=await prisma.podcastMember.findUnique({where:{podcastId_userId:{podcastId,userId}}});if(!member||!["OWNER","ADMIN"].includes(member.role))throw new Error("FORBIDDEN");}
+    const channel=await prisma.youtubeChannelSync.findUnique({where:{podcastId}});
+    if(!channel)throw new Error("YOUTUBE_NOT_CONNECTED");
+    if(options.selectedVideoIds!==undefined){
+      const ids=z.array(z.string().regex(/^[\w-]{11}$/)).min(1).max(500).parse(options.selectedVideoIds);
+      // Check ownership of the selected videos before scheduling any mutation.
+      const videos=await YouTubeCatalogService.videos(ids,channel.channelId);
+      if(videos.length!==new Set(ids).size)throw new Error("VIDEOS_UNAVAILABLE: Certaines vidéos ne sont plus accessibles. Actualisez la sélection.");
+      await prisma.jobQueueItem.create({data:{queueName:"youtube-importer",jobType:"YOUTUBE_INITIAL_IMPORT",payload:{youtubeChannelSyncId:channel.id,podcastId,selectedVideoIds:ids},maxAttempts:5}});
+      return {selectedCount:ids.length,syncStatus:"PENDING",message:"Importation des archives placée en file d’attente."};
     }
-
-    const channel = await prisma.youtubeChannelSync.findUnique({ where: { podcastId } });
-    if (!channel) throw new Error("YOUTUBE_NOT_CONNECTED");
-
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        "YOUTUBE_API_KEY_REQUIRED: La clé d'API YouTube Data v3 n'est pas configurée sur le serveur. L'importation de l'historique complet nécessite une clé d'API officielle. Vous pouvez importer les 15 vidéos récentes disponibles dans le flux public ou coller des URLs individuelles."
-      );
-    }
-
-    const playlistId = channel.uploadsPlaylistId || `UU${channel.channelId.slice(2)}`;
-    let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=25&key=${apiKey}`;
-    if (options.pageToken) {
-      url += `&pageToken=${encodeURIComponent(options.pageToken)}`;
-    }
-
-    const res = await fetch(url);
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`YOUTUBE_API_ERROR: Erreur YouTube Data API (${res.status}): ${errBody.slice(0, 200)}`);
-    }
-
-    const data = await res.json();
-    const items = data.items || [];
-    const videoIds = items.map((i: any) => i.contentDetails?.videoId).filter(Boolean);
-
-    // Récupérer durées réelles ISO 8601
-    const enriched = new Map<string, number>();
-    if (videoIds.length > 0) {
-      try {
-        const vUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(",")}&key=${apiKey}`;
-        const vRes = await fetch(vUrl);
-        if (vRes.ok) {
-          const vData = await vRes.json();
-          for (const vi of vData.items || []) {
-            enriched.set(vi.id, this.parseIsoDuration(vi.contentDetails?.duration));
-          }
-        }
-      } catch {}
-    }
-
-    // Vérifier les déjà importés
-    const already = await prisma.youtubeImportedVideo.findMany({
-      where: { videoId: { in: videoIds } },
-      select: { videoId: true },
-    });
-    const alreadySet = new Set(already.map((a) => a.videoId));
-
-    const videos = items.map((item: any) => {
-      const vid = item.contentDetails?.videoId;
-      const snippet = item.snippet;
-      const durationSeconds = enriched.get(vid) || 0;
-
-      return {
-        videoId: vid,
-        title: snippet?.title || "Vidéo sans titre",
-        description: snippet?.description || "",
-        publishedAt: snippet?.publishedAt ? new Date(snippet.publishedAt) : null,
-        thumbnailUrl: snippet?.thumbnails?.high?.url || snippet?.thumbnails?.default?.url,
-        durationSeconds: durationSeconds > 0 ? durationSeconds : null,
-        durationLabel: durationSeconds > 0 ? this.formatDuration(durationSeconds) : "Durée inconnue",
-        alreadyImported: alreadySet.has(vid),
-      };
-    });
-
-    return {
-      videos,
-      nextPageToken: data.nextPageToken || null,
-      prevPageToken: data.prevPageToken || null,
-      totalResults: data.pageInfo?.totalResults || 0,
-    };
+    return this.previewChannel(channel.channelId,podcastId,options.pageToken);
   }
 
   /**

@@ -15,7 +15,7 @@ export class AdminYouTubeController {
       const { url } = req.body;
       if (!url) return sendError(res, "URL ou identifiant YouTube requis.", "BAD_REQUEST", 400);
 
-      const data = await YouTubeChannelService.previewChannel(url);
+      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken);
       return sendSuccess(res, data, "Prévisualisation de la chaîne YouTube réussie.");
     } catch (err: any) {
       return sendError(res, err.message || "Erreur de prévisualisation.", "ADMIN_YOUTUBE_ERROR", 400);
@@ -27,6 +27,7 @@ export class AdminYouTubeController {
    * Crée une nouvelle émission (ou lie une émission existante) et démarre l'importation de la chaîne YouTube
    */
   static async createImport(req: AuthenticatedRequest, res: Response) {
+    let createdPodcastId:string|undefined;
     try {
       const {
         channelUrl,
@@ -46,10 +47,14 @@ export class AdminYouTubeController {
       // Résolution de la chaîne
       const channel = await YouTubeResolverService.resolveChannel(channelUrl);
 
+      if(req.body.initialImportMode!=="FUTURE_ONLY" && (!Array.isArray(selectedVideoIds)||!selectedVideoIds.length))return sendError(res,"Sélectionnez au moins une vidéo.","EMPTY_SELECTION",400);
       let targetPodcastId = existingPodcastId;
 
       if (!targetPodcastId) {
         // Créer une nouvelle émission
+        if (!countryId) return sendError(res,"Choisissez le pays de l’émission.","COUNTRY_REQUIRED",400);
+        const linked=await prisma.youtubeChannelSync.findFirst({where:{channelId:channel.channelId},select:{podcastId:true}});
+        if(linked)return sendError(res,"Cette chaîne est déjà connectée. Ouvrez son émission pour importer d’autres vidéos.","CHANNEL_ALREADY_CONNECTED",409,{podcastId:linked.podcastId});
         if (!name) return sendError(res, "Le nom de l'émission est obligatoire.", "BAD_REQUEST", 400);
 
         const slugBase = slugify(name) || "emission-youtube";
@@ -66,12 +71,11 @@ export class AdminYouTubeController {
             slug,
             description: description || channel.description || `Chaîne YouTube ${channel.title}`,
             shortDescription: (description || channel.description || "").slice(0, 160),
-            cover: cover || channel.thumbnailUrl || "https://images.unsplash.com/photo-1590602847861-f357a9332bbc?q=80&w=600",
+            cover: cover || channel.thumbnailUrl || "",
             primaryLanguageCode: languageCode || "fr",
-            countryId: countryId || "ML",
+            countryId,
             status: autoPublish ? "PUBLISHED" : "DRAFT",
             creationSource: "ADMIN",
-            qualityScore: 85,
             ownershipStatus: "UNCLAIMED",
             managedByBamakoPodcast: true,
             categories: categoryIds && categoryIds.length > 0 ? {
@@ -80,13 +84,14 @@ export class AdminYouTubeController {
           },
         });
         targetPodcastId = podcast.id;
+        createdPodcastId=podcast.id;
 
         // Associer l'administrateur comme propriétaire de l'émission créée
         await prisma.podcastMember.upsert({
           where: { podcastId_userId: { podcastId: podcast.id, userId: req.user!.id } },
           create: { podcastId: podcast.id, userId: req.user!.id, role: "OWNER" },
           update: { role: "OWNER" },
-        }).catch(() => {});
+        });
       }
 
       // Connecter la chaîne à l'émission
@@ -104,6 +109,8 @@ export class AdminYouTubeController {
           selectedVideoIds,
           settings: {
             autoPublish: !!autoPublish,
+            autoSyncFuture: req.body.autoSyncFuture !== false,
+            initialImportMode: req.body.initialImportMode || "SELECT",
             excludeShorts: req.body.excludeShorts !== false,
             keepManualEdits: true,
             importScope: selectedVideoIds && selectedVideoIds.length > 0 ? "SELECT" : "ALL",
@@ -118,6 +125,7 @@ export class AdminYouTubeController {
         "Importation de la chaîne YouTube lancée avec succès."
       );
     } catch (err: any) {
+      if(createdPodcastId)await prisma.podcast.delete({where:{id:createdPodcastId}}).catch(cleanup=>console.error("[YouTube import cleanup]",cleanup.message));
       return sendError(res, err.message || "Erreur lors de la création de l'import.", "ADMIN_YOUTUBE_ERROR", 400);
     }
   }
@@ -138,6 +146,7 @@ export class AdminYouTubeController {
           payload: {
             youtubeChannelSyncId: channel.id,
             podcastId,
+            manual: true,
           },
           status: "PENDING",
         },
@@ -178,13 +187,14 @@ export class AdminYouTubeController {
       if (!channel) return sendError(res, "Chaîne non trouvée", "NOT_FOUND", 404);
 
       const currentSettings = (channel.importSettings as any) || {};
-      const updatedSettings = req.body.settings ? { ...currentSettings, ...req.body.settings } : currentSettings;
+      const updatedSettings = YouTubeChannelService.normalizeSettings(req.body.settings || {},currentSettings);
 
       const updated = await prisma.youtubeChannelSync.update({
         where: { podcastId },
         data: {
-          syncEnabled: req.body.syncEnabled !== undefined ? req.body.syncEnabled : channel.syncEnabled,
-          importSettings: updatedSettings,
+          syncEnabled: req.body.syncEnabled !== undefined ? req.body.syncEnabled === true : channel.syncEnabled,
+          ...(req.body.syncEnabled===true?{nextSyncAt:new Date()}:req.body.syncEnabled===false?{nextSyncAt:null}:{}),
+          importSettings: updatedSettings as any,
           syncStatus: req.body.syncEnabled === false ? "PAUSED" : (channel.syncStatus === "PAUSED" ? "IDLE" : channel.syncStatus),
         },
       });
@@ -250,7 +260,7 @@ export class AdminYouTubeController {
   static async historicalImport(req: AuthenticatedRequest, res: Response) {
     try {
       const podcastId = req.params.podcastId;
-      const data = await YouTubeChannelService.historicalImport(req.user!.id, podcastId, req.body);
+      const data = await YouTubeChannelService.historicalImport(req.user!.id, podcastId, req.body, true);
       return sendSuccess(res, data, "Vidéos historiques récupérées.");
     } catch (err: any) {
       return sendError(res, err.message, "ADMIN_YOUTUBE_ERROR", 400);

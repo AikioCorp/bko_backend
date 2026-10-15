@@ -49,7 +49,7 @@ export class YouTubeResolverService {
     try {
       const url = new URL(input.startsWith("http") ? input : `https://${input}`);
       const hostname = url.hostname.toLowerCase();
-      if (!hostname.includes("youtube.com") && !hostname.includes("youtu.be")) {
+      if (!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(hostname)) {
         throw new Error("NOT_YOUTUBE_URL: Cette adresse ne provient pas de YouTube.");
       }
 

@@ -1,3 +1,4 @@
+import { prisma } from "../../config/prisma.js";
 import { ViewerService } from "../interactions/viewer.service.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { Request, Response } from "express";

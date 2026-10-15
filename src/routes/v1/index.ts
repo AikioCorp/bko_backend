@@ -303,9 +303,9 @@ router.get("/admin/rss/imports/:id/status", authenticateToken, requirePermission
 router.post("/admin/podcasts/:id/rss/sync", authenticateToken, requirePermission("catalog.edit"), AdminRssController.syncFeedNow);
 
 // --- ADMIN YOUTUBE IMPORTS & SYNC ---
-router.post("/admin/youtube/preview", authenticateToken, requirePermission("catalog.create"), AdminYouTubeController.preview);
+router.post("/admin/youtube/preview", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.preview);
 router.get("/admin/youtube/imports", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.listChannels);
-router.post("/admin/youtube/imports", authenticateToken, requirePermission("catalog.create"), AdminYouTubeController.createImport);
+router.post("/admin/youtube/imports", authenticateToken, (req,res,next)=>requirePermission(req.body.existingPodcastId?"catalog.edit":"catalog.create")(req,res,next), AdminYouTubeController.createImport);
 router.get("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.getChannelStatus);
 router.post("/admin/podcasts/:podcastId/youtube/sync", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.syncChannelNow);
 router.patch("/admin/podcasts/:podcastId/youtube/settings", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.updateSettings);
