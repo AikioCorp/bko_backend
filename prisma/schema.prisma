@@ -292,6 +292,7 @@ model User {
   passwordResetExpiresAt DateTime?
   otpCode                String?
   otpExpiresAt           DateTime?
+  welcomeEmailSentAt     DateTime?
 
   // System RBAC
   userRoles UserRole[]
@@ -1479,6 +1480,35 @@ model Report {
   @@index([targetType, targetId])
 }
 
+model SupportTicket {
+  id          String @id @default(cuid())
+  userId      String?
+  email       String
+  subject     String
+  category    String @default("GENERAL")
+  origin      String @default("WEB")
+  status      String @default("OPEN")
+  accessHash  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  messages    SupportMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status, updatedAt])
+}
+
+model SupportMessage {
+  id        String @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String?
+  kind      String @default("USER")
+  body      String @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
 model AuditLog {
   id            String   @id @default(cuid())
   actorId       String?
@@ -1705,8 +1735,11 @@ model UserRecommendationProfile {
   id                    String   @id @default(cuid())
   userId                String   @unique
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  personalizationActive Boolean  @default(true)
-  onboardingCompleted   Boolean  @default(false)
+  personalizationActive Boolean   @default(true)
+  onboardingCompleted   Boolean   @default(false)
+  onboardingState       String    @default("NOT_PROMPTED")
+  onboardingPromptedAt  DateTime?
+  onboardingDismissedAt DateTime?
   preferencesVersion    Int      @default(1)
   profileVersion        Int      @default(1)
   topicScores           Json     @default("{}")

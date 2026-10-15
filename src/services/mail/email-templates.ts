@@ -324,4 +324,67 @@ export const Emails = {
       text: text(o.title, paragraphs, url),
     };
   },
+
+  welcome(to: string, userName?: string | null): Mail {
+    const greeting = userName?.trim() ? `Bonjour ${userName.trim()},` : "Bonjour,";
+    const personalizeUrl = `${APP_URL}/onboarding`;
+    const exploreUrl = `${APP_URL}/podcasts`;
+    const supportUrl = `${APP_URL}/support`;
+
+    const paragraphs = [
+      greeting,
+      "Bienvenue sur Bamako Podcast, la plateforme de référence pour découvrir, écouter et soutenir les podcasts et les voix du Mali et d'Afrique.",
+      "Pour profiter d'une expérience adaptée à vos goûts, choisissez vos langues d'écoute et vos centres d'intérêt favoris.",
+      "Personnaliser mes écoutes : " + personalizeUrl,
+      "Découvrir les émissions : " + exploreUrl,
+      "Besoin d'aide ? Notre support est à votre disposition : " + supportUrl,
+    ];
+
+    const contentHtml = `
+      <p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.65; color: #D4D4D8;">
+        ${esc(greeting)}
+      </p>
+      <p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.65; color: #D4D4D8;">
+        Bienvenue sur <strong>Bamako Podcast</strong>, la plateforme de référence pour découvrir, écouter et soutenir les podcasts et les voix du Mali et d'Afrique.
+      </p>
+      <p style="margin: 0 0 20px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.65; color: #D4D4D8;">
+        Pour profiter dès maintenant d'une expérience sur mesure, configurez vos langues d'écoute et vos thématiques préférées.
+      </p>
+
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 24px 0 12px 0;">
+        <tr>
+          <td align="center" style="padding: 0 0 12px 0;">
+            <a href="${esc(personalizeUrl)}" target="_blank" style="display: block; width: 100%; max-width: 320px; padding: 14px 24px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; font-weight: 700; color: #09090B !important; text-decoration: none; border-radius: 12px; background-color: #FFBF00 !important; box-sizing: border-box;">
+              Personnaliser mes écoutes &rarr;
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td align="center">
+            <a href="${esc(exploreUrl)}" target="_blank" style="display: block; width: 100%; max-width: 320px; padding: 12px 24px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; color: #E4E4E7 !important; text-decoration: none; border-radius: 12px; background-color: #27272A; border: 1px solid #3F3F46; box-sizing: border-box;">
+              Découvrir les émissions
+            </a>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin: 24px 0 0 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 18px; color: #71717A; text-align: center;">
+        Besoin d'assistance ? Consultez notre <a href="${esc(supportUrl)}" target="_blank" style="color: #FFBF00; text-decoration: underline;">centre d'aide</a> ou répondez directement à cet email.
+      </p>
+    `;
+
+    const htmlContent = emailShell({
+      preheader: `Bienvenue sur Bamako Podcast, ${esc(userName || "cher auditeur")}`,
+      badge: "BIENVENUE",
+      title: "Bienvenue sur Bamako Podcast",
+      contentHtml,
+    });
+
+    return {
+      to,
+      subject: "Bienvenue sur Bamako Podcast",
+      html: htmlContent,
+      text: text("Bienvenue sur Bamako Podcast", paragraphs),
+    };
+  },
 };

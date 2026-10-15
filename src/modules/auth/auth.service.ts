@@ -312,9 +312,9 @@ export class AuthService {
         userRoles: {
           include: { role: true },
         },
-        recommendationProfile: {
-          select: { onboardingCompleted: true },
-        },
+        recommendationProfile: true,
+        languagePreferences: { select: { languageCode: true } },
+        topicPreferences: { select: { topicId: true } },
       },
     });
 
@@ -348,6 +348,13 @@ export class AuthService {
         otpCode: null,
         otpExpiresAt: null,
       },
+    });
+
+    // Déclencher le mail de bienvenue transactionnel de manière strictement idempotente
+    void MailService.enqueueWelcomeEmail({
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
     });
 
     const roles = user.userRoles.map((ur) => ur.role.name);
@@ -398,6 +405,10 @@ export class AuthService {
       }),
     ]);
 
+    const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
+    const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
+    const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
+
     return {
       user: {
         id: user.id,
@@ -406,7 +417,12 @@ export class AuthService {
         avatar: user.avatar,
         roles,
         isVerified: true,
-        onboardingCompleted: user.recommendationProfile?.onboardingCompleted ?? false,
+        isSuspended: user.isSuspended,
+        suspendedReason: user.suspendedReason,
+        onboardingCompleted,
+        onboardingState,
+        hasPreferences,
+        isNewUser: true,
       },
       accessToken,
       refreshToken: rawRefreshToken,
@@ -442,6 +458,9 @@ export class AuthService {
         userRoles: {
           include: { role: true },
         },
+        recommendationProfile: true,
+        languagePreferences: { select: { languageCode: true } },
+        topicPreferences: { select: { topicId: true } },
       },
     });
 
@@ -514,6 +533,10 @@ export class AuthService {
       }),
     ]);
 
+    const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
+    const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
+    const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
+
     return {
       user: {
         id: user.id,
@@ -521,6 +544,13 @@ export class AuthService {
         fullName: user.fullName,
         avatar: user.avatar,
         roles,
+        isVerified: user.isVerified,
+        isSuspended: user.isSuspended,
+        suspendedReason: user.suspendedReason,
+        onboardingCompleted,
+        onboardingState,
+        hasPreferences,
+        isNewUser: false,
       },
       accessToken,
       refreshToken: rawRefreshToken,
@@ -650,12 +680,18 @@ export class AuthService {
     const fullName = payload.name || payload.email.split("@")[0];
     const avatar = payload.picture || null;
 
+    let isNewUser = false;
+    let shouldSendWelcome = false;
+
     let user = await prisma.user.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
       include: {
         userRoles: {
           include: { role: true },
         },
+        recommendationProfile: true,
+        languagePreferences: { select: { languageCode: true } },
+        topicPreferences: { select: { topicId: true } },
       },
     });
 
@@ -664,6 +700,8 @@ export class AuthService {
     }
 
     if (!user) {
+      isNewUser = true;
+      shouldSendWelcome = true;
       // Création automatique de l'utilisateur vérifié
       const roleUser = await prisma.role.findUnique({ where: { name: "USER" } });
       user = await prisma.user.create({
@@ -672,6 +710,12 @@ export class AuthService {
           fullName,
           avatar,
           isVerified: true, // Google vérifie déjà l'adresse email
+          recommendationProfile: {
+            create: {
+              onboardingCompleted: false,
+              onboardingState: "NOT_PROMPTED",
+            },
+          },
           ...(roleUser
             ? {
                 userRoles: {
@@ -686,10 +730,14 @@ export class AuthService {
           userRoles: {
             include: { role: true },
           },
+          recommendationProfile: true,
+          languagePreferences: { select: { languageCode: true } },
+          topicPreferences: { select: { topicId: true } },
         },
       });
     } else if (!user.isVerified) {
       // Si l'utilisateur existait mais n'était pas encore vérifié, Google certifie son email
+      shouldSendWelcome = user.welcomeEmailSentAt === null;
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -700,7 +748,18 @@ export class AuthService {
           userRoles: {
             include: { role: true },
           },
+          recommendationProfile: true,
+          languagePreferences: { select: { languageCode: true } },
+          topicPreferences: { select: { topicId: true } },
         },
+      });
+    }
+
+    if (shouldSendWelcome) {
+      void MailService.enqueueWelcomeEmail({
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
       });
     }
 
@@ -752,6 +811,10 @@ export class AuthService {
       }),
     ]);
 
+    const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
+    const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
+    const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
+
     return {
       user: {
         id: user.id,
@@ -760,6 +823,12 @@ export class AuthService {
         avatar: user.avatar,
         roles,
         isVerified: user.isVerified,
+        isSuspended: user.isSuspended,
+        suspendedReason: user.suspendedReason,
+        onboardingCompleted,
+        onboardingState,
+        hasPreferences,
+        isNewUser,
       },
       accessToken,
       refreshToken: rawRefreshToken,
@@ -863,9 +932,9 @@ export class AuthService {
         userRoles: {
           include: { role: true },
         },
-        recommendationProfile: {
-          select: { onboardingCompleted: true },
-        },
+        recommendationProfile: true,
+        languagePreferences: { select: { languageCode: true } },
+        topicPreferences: { select: { topicId: true } },
       },
     });
 
@@ -946,6 +1015,10 @@ export class AuthService {
       }),
     ]);
 
+    const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
+    const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
+    const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
+
     return {
       user: {
         id: user.id,
@@ -954,7 +1027,12 @@ export class AuthService {
         avatar: user.avatar,
         roles,
         isVerified: true,
-        onboardingCompleted: user.recommendationProfile?.onboardingCompleted ?? false,
+        isSuspended: user.isSuspended,
+        suspendedReason: user.suspendedReason,
+        onboardingCompleted,
+        onboardingState,
+        hasPreferences,
+        isNewUser: false,
       },
       accessToken,
       refreshToken: rawRefreshToken,

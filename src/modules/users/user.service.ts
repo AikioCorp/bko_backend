@@ -14,6 +14,9 @@ export class UserService {
         fullName: true,
         avatar: true,
         isVerified: true,
+        isSuspended: true,
+        suspendedAt: true,
+        suspendedReason: true,
         createdAt: true,
         userRoles: {
           include: {
@@ -37,7 +40,14 @@ export class UserService {
         topicPreferences: { include: { topic: true } },
         countryPreferences: { include: { country: true } },
         notificationPreference: true,
-        recommendationProfile: { select: { onboardingCompleted: true } },
+        recommendationProfile: {
+          select: {
+            onboardingCompleted: true,
+            onboardingState: true,
+            onboardingPromptedAt: true,
+            onboardingDismissedAt: true,
+          },
+        },
         passwordHash: true,
       },
     });
@@ -54,12 +64,18 @@ export class UserService {
     );
 
     const { userRoles, passwordHash, ...cleanUser } = user;
+    const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
+    const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
+    const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
 
     return {
       ...cleanUser,
       hasPassword: Boolean(passwordHash),
       roles,
       permissions,
+      hasPreferences,
+      onboardingCompleted,
+      onboardingState,
     };
   }
 

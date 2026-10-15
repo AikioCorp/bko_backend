@@ -423,51 +423,176 @@ export class UserProfileService {
   }
 
   /**
-   * Marque l'onboarding comme complété
+   * Marque l'onboarding comme complété avec enregistrement transactionnel,
+   * validation des identifiants/codes et distinction entre champ omis (conserver)
+   * et tableau vide (effacer explicitement).
    */
   static async completeOnboarding(
     userId: string,
-    topicIds: string[] = [],
-    languageCodes: string[] = [],
-    podcastIds: string[] = []
+    options: {
+      topicIds?: string[];
+      languageCodes?: string[];
+      podcastIds?: string[];
+    }
   ) {
-    if (topicIds.length > 0) {
-      await prisma.userTopicPreference.deleteMany({ where: { userId } });
-      await prisma.userTopicPreference.createMany({
-        data: topicIds.map((topicId) => ({ userId, topicId })),
-      });
-    }
-    if (languageCodes.length > 0) {
-      await prisma.userLanguagePreference.deleteMany({ where: { userId } });
-      await prisma.userLanguagePreference.createMany({
-        data: languageCodes.map((code) => ({ userId, languageCode: code })),
-      });
-    }
-    if (podcastIds.length > 0) {
-      for (const pid of podcastIds) {
-        if (!pid) continue;
-        await prisma.podcastFollow.upsert({
-          where: { userId_podcastId: { userId, podcastId: pid } },
-          update: {},
-          create: { userId, podcastId: pid },
+    const { topicIds, languageCodes, podcastIds } = options;
+
+    // 1. Validation & déduplication des topics
+    let validatedTopicIds: string[] | undefined = undefined;
+    if (topicIds !== undefined) {
+      if (!Array.isArray(topicIds)) {
+        throw new Error("topicIds doit être un tableau d'identifiants de sujets.");
+      }
+      const rawUnique = Array.from(new Set(topicIds.filter(Boolean).map(String)));
+      if (rawUnique.length > 0) {
+        const found = await prisma.topic.findMany({
+          where: { id: { in: rawUnique } },
+          select: { id: true },
         });
+        const foundSet = new Set(found.map((t) => t.id));
+        const invalid = rawUnique.filter((id) => !foundSet.has(id));
+        if (invalid.length > 0) {
+          throw new Error(`Sujets inexistants : ${invalid.slice(0, 3).join(", ")}`);
+        }
+        validatedTopicIds = rawUnique;
+      } else {
+        validatedTopicIds = [];
       }
     }
 
-    await prisma.userRecommendationProfile.upsert({
+    // 2. Validation & déduplication des langues
+    let validatedLangCodes: string[] | undefined = undefined;
+    if (languageCodes !== undefined) {
+      if (!Array.isArray(languageCodes)) {
+        throw new Error("languageCodes doit être un tableau de codes de langue.");
+      }
+      const rawUnique = Array.from(new Set(languageCodes.filter(Boolean).map(String)));
+      if (rawUnique.length > 0) {
+        const found = await prisma.language.findMany({
+          where: { code: { in: rawUnique } },
+          select: { code: true },
+        });
+        const foundSet = new Set(found.map((l) => l.code));
+        const invalid = rawUnique.filter((c) => !foundSet.has(c));
+        if (invalid.length > 0) {
+          throw new Error(`Codes de langue inexistants : ${invalid.slice(0, 3).join(", ")}`);
+        }
+        validatedLangCodes = rawUnique;
+      } else {
+        validatedLangCodes = [];
+      }
+    }
+
+    // 3. Validation & déduplication des podcasts
+    let validatedPodcastIds: string[] | undefined = undefined;
+    if (podcastIds !== undefined) {
+      if (!Array.isArray(podcastIds)) {
+        throw new Error("podcastIds doit être un tableau d'identifiants d'émissions.");
+      }
+      const rawUnique = Array.from(new Set(podcastIds.filter(Boolean).map(String)));
+      if (rawUnique.length > 0) {
+        const found = await prisma.podcast.findMany({
+          where: { id: { in: rawUnique } },
+          select: { id: true },
+        });
+        const foundSet = new Set(found.map((p) => p.id));
+        validatedPodcastIds = rawUnique.filter((id) => foundSet.has(id));
+      } else {
+        validatedPodcastIds = [];
+      }
+    }
+
+    // 4. Transaction atomique
+    await prisma.$transaction(async (tx) => {
+      // Topics
+      if (validatedTopicIds !== undefined) {
+        await tx.userTopicPreference.deleteMany({ where: { userId } });
+        if (validatedTopicIds.length > 0) {
+          await tx.userTopicPreference.createMany({
+            data: validatedTopicIds.map((topicId) => ({ userId, topicId })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      // Languages
+      if (validatedLangCodes !== undefined) {
+        await tx.userLanguagePreference.deleteMany({ where: { userId } });
+        if (validatedLangCodes.length > 0) {
+          await tx.userLanguagePreference.createMany({
+            data: validatedLangCodes.map((languageCode) => ({ userId, languageCode })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      // Podcasts suivis
+      if (validatedPodcastIds !== undefined && validatedPodcastIds.length > 0) {
+        for (const pid of validatedPodcastIds) {
+          await tx.podcastFollow.upsert({
+            where: { userId_podcastId: { userId, podcastId: pid } },
+            update: {},
+            create: { userId, podcastId: pid },
+          });
+        }
+      }
+
+      // Profil de recommandation
+      await tx.userRecommendationProfile.upsert({
+        where: { userId },
+        update: {
+          onboardingCompleted: true,
+          onboardingState: "COMPLETED",
+          preferencesVersion: { increment: 1 },
+          updatedAt: new Date(),
+        },
+        create: {
+          userId,
+          onboardingCompleted: true,
+          onboardingState: "COMPLETED",
+        },
+      });
+    });
+
+    await this.invalidateProfile(userId);
+    return this.rebuildProfile(userId);
+  }
+
+  /**
+   * Met à jour l'état d'invitation (PROMPTED ou DISMISSED)
+   * sans écraser un statut COMPLETED déjà acquis.
+   */
+  static async updateOnboardingState(userId: string, state: "PROMPTED" | "DISMISSED") {
+    const existing = await prisma.userRecommendationProfile.findUnique({
       where: { userId },
-      update: {
-        onboardingCompleted: true,
-        preferencesVersion: { increment: 1 },
-        updatedAt: new Date(),
-      },
+      select: { onboardingState: true, onboardingCompleted: true },
+    });
+
+    if (existing?.onboardingState === "COMPLETED" || existing?.onboardingCompleted) {
+      return { onboardingState: "COMPLETED" };
+    }
+
+    const data: any = {
+      onboardingState: state,
+      updatedAt: new Date(),
+    };
+    if (state === "PROMPTED") {
+      data.onboardingPromptedAt = new Date();
+    } else if (state === "DISMISSED") {
+      data.onboardingDismissedAt = new Date();
+    }
+
+    const updated = await prisma.userRecommendationProfile.upsert({
+      where: { userId },
+      update: data,
       create: {
         userId,
-        onboardingCompleted: true,
+        onboardingCompleted: false,
+        ...data,
       },
     });
 
-    return this.rebuildProfile(userId);
+    return { onboardingState: updated.onboardingState };
   }
 
   private static invalidationListeners: Array<(userId: string) => void> = [];

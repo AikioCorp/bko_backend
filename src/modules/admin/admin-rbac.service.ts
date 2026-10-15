@@ -213,6 +213,7 @@ export class AdminRbacService {
           ? { isSuspended: true, suspendedAt: new Date(), suspendedReason: finalReason }
           : { isSuspended: false, suspendedAt: null, suspendedReason: null },
       }),
+      prisma.jobQueueItem.create({data:{queueName:"emails",jobType:"SEND_EMAIL",maxAttempts:5,payload:{to:target.email,subject:suspended?"Votre compte a été suspendu":"Votre compte a été réactivé",text:suspended?"Votre compte a été suspendu. Vous pouvez contacter l’assistance depuis la page de suspension.":"Votre compte a été réactivé. Vous pouvez vous reconnecter à Bamako Podcast.",html:suspended?"<p>Votre compte a été suspendu. Vous pouvez contacter l’assistance depuis la page de suspension.</p>":"<p>Votre compte a été réactivé. Vous pouvez vous reconnecter à Bamako Podcast.</p>"}}}),
       ...(suspended
         ? [prisma.refreshToken.updateMany({ where: { userId }, data: { isRevoked: true } }), prisma.session.deleteMany({ where: { userId } })]
         : []),

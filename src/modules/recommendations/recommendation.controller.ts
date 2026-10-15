@@ -231,14 +231,31 @@ export class RecommendationController {
     try {
       if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
       const { topicIds, languageCodes, podcastIds } = req.body;
-      const profile = await UserProfileService.completeOnboarding(
-        req.user.id,
-        topicIds || [],
-        languageCodes || [],
-        podcastIds || []
-      );
+      const profile = await UserProfileService.completeOnboarding(req.user.id, {
+        topicIds,
+        languageCodes,
+        podcastIds,
+      });
       PersonalizationEngineService.invalidateUserCache(req.user.id);
       return sendSuccess(res, profile, "Onboarding enregistré");
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  /**
+   * POST /api/v1/recommendations/onboarding/state
+   * Met à jour l'état de l'invitation (PROMPTED ou DISMISSED)
+   */
+  static async updateOnboardingState(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
+      const { state } = req.body;
+      if (!state || !["PROMPTED", "DISMISSED"].includes(state)) {
+        return sendError(res, "État invalide. Valeurs acceptées : PROMPTED, DISMISSED", "BAD_REQUEST", 400);
+      }
+      const result = await UserProfileService.updateOnboardingState(req.user.id, state);
+      return sendSuccess(res, result, "État d'invitation mis à jour");
     } catch (error: any) {
       return sendError(res, error.message);
     }

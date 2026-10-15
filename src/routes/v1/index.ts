@@ -1,3 +1,4 @@
+import { supportRouter } from "../../modules/users/support.routes.js";
 import { requireStudioAccess } from "../../middlewares/studio.middleware.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
 import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
@@ -164,7 +165,7 @@ router.get("/me/devices", authenticateToken, UserController.getDevices);
 router.delete("/me/devices", authenticateToken, UserController.revokeAllOtherDevices);
 router.delete("/me/devices/:id", authenticateToken, UserController.revokeDevice);
 router.post("/me/export", authenticateToken, UserController.exportData);
-router.post("/me/support-tickets", authenticateToken, UserController.submitSupportTicket);
+router.use(supportRouter);
 
 // --- CIRCUIT D'ABONNEMENT, MONÉTISATION & PAYWALL ---
 router.get("/subscriptions/plans", SubscriptionController.listPlans);
@@ -516,6 +517,7 @@ router.delete("/recommendations/feedback/all", authenticateToken, Recommendation
 router.post("/recommendations/reset-profile", authenticateToken, RecommendationController.resetProfile);
 router.patch("/recommendations/settings", authenticateToken, RecommendationController.updateSettings);
 router.post("/recommendations/onboarding", authenticateToken, RecommendationController.completeOnboarding);
+router.post("/recommendations/onboarding/state", authenticateToken, RecommendationController.updateOnboardingState);
 router.post("/recommendations/events/listening", optionalAuthenticateToken, RecommendationController.recordListeningEvents);
 router.post("/recommendations/events/impressions", optionalAuthenticateToken, RecommendationController.recordImpressions);
 router.post("/recommendations/events/interactions", optionalAuthenticateToken, RecommendationController.recordInteraction);

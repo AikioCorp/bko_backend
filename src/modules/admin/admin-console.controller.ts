@@ -226,8 +226,8 @@ export class AdminConsoleController {
 
   static async setUserSuspension(req: AuthenticatedRequest, res: Response) {
     try {
-      const b = z.object({ suspended: z.boolean(), reason: z.string().max(500).optional() }).parse(req.body);
-      return sendSuccess(res, await AdminRbacService.setUserSuspension(actor(req), idParam(req), b.suspended, b.reason, req.ip));
+      const b = z.object({ suspended: z.boolean(), reason: z.string().max(500).nullish() }).parse(req.body);
+      return sendSuccess(res, await AdminRbacService.setUserSuspension(actor(req), idParam(req), b.suspended, b.reason ?? undefined, req.ip));
     } catch (e) {
       return fail(res, e);
     }

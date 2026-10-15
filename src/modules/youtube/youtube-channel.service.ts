@@ -63,20 +63,24 @@ export class YouTubeChannelService {
       // Détection des Shorts : indication basée sur le lien ou format court si durée connue
       const isLikelyShort = item.enclosureUrl.includes("/shorts/") || (enriched ? enriched.durationSeconds <= 60 : false);
 
+      const durSec = enriched ? enriched.durationSeconds : (item.durationKnown ? item.durationSeconds : null);
       return {
         videoId: vid,
+        youtubeVideoId: vid,
         title: item.title,
         description: item.description ? item.description.slice(0, 300) : "",
         publishedAt: item.pubDate,
         thumbnailUrl: item.thumbnailUrl,
         canonicalUrl: item.enclosureUrl,
-        durationSeconds: enriched ? enriched.durationSeconds : (item.durationKnown ? item.durationSeconds : null),
+        duration: durSec,
+        durationSeconds: durSec,
         durationLabel: enriched 
           ? this.formatDuration(enriched.durationSeconds) 
           : (item.durationKnown ? this.formatDuration(item.durationSeconds) : "Durée inconnue"),
         isLikelyShort,
         embeddable: enriched ? enriched.embeddable : true,
         alreadyImported: isAlready,
+        isAlreadyImported: isAlready,
         localEpisodeId: importedMap.get(vid) || null,
       };
     });
@@ -86,6 +90,7 @@ export class YouTubeChannelService {
       hasApiKey: !!apiKey,
       videosCount: videos.length,
       videos,
+      items: videos,
       note: apiKey 
         ? "Durées et intégrations vérifiées via YouTube Data API v3." 
         : "Durées indisponibles dans le flux standard sans clé d'API. L'aperçu affiche les vidéos récentes prêtes à l'intégration.",
@@ -109,13 +114,16 @@ export class YouTubeChannelService {
       feedUrl: string;
       selectedVideoIds?: string[];
       settings?: Partial<YouTubeImportSettings>;
-    }
+    },
+    isAdmin = false
   ) {
-    const member = await prisma.podcastMember.findUnique({
-      where: { podcastId_userId: { podcastId, userId } },
-    });
-    if (!member || (member.role !== "OWNER" && member.role !== "ADMIN")) {
-      throw new Error("FORBIDDEN: Vous n'avez pas les droits nécessaires sur cette émission.");
+    if (!isAdmin) {
+      const member = await prisma.podcastMember.findUnique({
+        where: { podcastId_userId: { podcastId, userId } },
+      });
+      if (!member || (member.role !== "OWNER" && member.role !== "ADMIN")) {
+        throw new Error("FORBIDDEN: Vous n'avez pas les droits nécessaires sur cette émission.");
+      }
     }
 
     const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });

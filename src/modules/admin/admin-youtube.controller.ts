@@ -80,24 +80,36 @@ export class AdminYouTubeController {
           },
         });
         targetPodcastId = podcast.id;
+
+        // Associer l'administrateur comme propriétaire de l'émission créée
+        await prisma.podcastMember.upsert({
+          where: { podcastId_userId: { podcastId: podcast.id, userId: req.user!.id } },
+          create: { podcastId: podcast.id, userId: req.user!.id, role: "OWNER" },
+          update: { role: "OWNER" },
+        }).catch(() => {});
       }
 
       // Connecter la chaîne à l'émission
-      const connectResult = await YouTubeChannelService.connectChannel(req.user!.id, targetPodcastId, {
-        channelId: channel.channelId,
-        channelTitle: channel.title,
-        channelDescription: channel.description,
-        thumbnailUrl: channel.thumbnailUrl,
-        customUrl: channel.customUrl,
-        uploadsPlaylistId: channel.uploadsPlaylistId,
-        feedUrl: channel.feedUrl,
-        selectedVideoIds,
-        settings: {
-          autoPublish: !!autoPublish,
-          keepManualEdits: true,
-          importScope: selectedVideoIds && selectedVideoIds.length > 0 ? "SELECT" : "ALL",
+      const connectResult = await YouTubeChannelService.connectChannel(
+        req.user!.id,
+        targetPodcastId,
+        {
+          channelId: channel.channelId,
+          channelTitle: channel.title,
+          channelDescription: channel.description,
+          thumbnailUrl: channel.thumbnailUrl,
+          customUrl: channel.customUrl,
+          uploadsPlaylistId: channel.uploadsPlaylistId,
+          feedUrl: channel.feedUrl,
+          selectedVideoIds,
+          settings: {
+            autoPublish: !!autoPublish,
+            keepManualEdits: true,
+            importScope: selectedVideoIds && selectedVideoIds.length > 0 ? "SELECT" : "ALL",
+          },
         },
-      });
+        true // isAdmin
+      );
 
       return sendSuccess(
         res,

@@ -1,6 +1,5 @@
-import { PrismaClient, EditorialSectionType, EditorialSourceMode } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { EditorialSectionType, EditorialSourceMode } from "@prisma/client";
+import { prisma } from "../../config/prisma.js";
 
 export class AdminEditorialError extends Error {
   constructor(message: string, public code: string = "EDITORIAL_ERROR", public status: number = 400) {

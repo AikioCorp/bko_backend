@@ -94,4 +94,46 @@ export class MailService {
       data: { queueName: "emails", jobType: "SEND_EMAIL", payload: { ...mail }, maxAttempts: 5 },
     });
   }
+
+  /**
+   * Enfile un email de bienvenue pour un utilisateur de manière strictement idempotente.
+   * Si welcomeEmailSentAt est déjà renseigné, aucun email n'est réexpédié.
+   * L'écriture en base et l'enfilement s'exécutent de façon atomique dans une transaction.
+   */
+  static async enqueueWelcomeEmail(user: { id: string; email: string; fullName?: string | null }): Promise<boolean> {
+    try {
+      const { Emails } = await import("./email-templates.js");
+      const mail = Emails.welcome(user.email, user.fullName);
+
+      return await prisma.$transaction(async (tx) => {
+        const updateResult = await tx.user.updateMany({
+          where: {
+            id: user.id,
+            welcomeEmailSentAt: null,
+          },
+          data: {
+            welcomeEmailSentAt: new Date(),
+          },
+        });
+
+        if (updateResult.count === 0) {
+          return false;
+        }
+
+        await tx.jobQueueItem.create({
+          data: {
+            queueName: "emails",
+            jobType: "SEND_EMAIL",
+            payload: { ...mail },
+            maxAttempts: 5,
+          },
+        });
+
+        return true;
+      });
+    } catch (err: any) {
+      console.error("[MailService.enqueueWelcomeEmail] Erreur idempotence welcome email:", err.message);
+      return false;
+    }
+  }
 }
