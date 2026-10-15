@@ -15,6 +15,7 @@ async function main() {
 
   // 1.1 PAYS (Country)
   const countriesData = [
+    { id: "BJ", code: "BJ", name: "Bénin", flagEmoji: "🇧🇯" },
     { id: "ML", name: "Mali", code: "ML", flagEmoji: "🇲🇱" },
     { id: "SN", name: "Sénégal", code: "SN", flagEmoji: "🇸🇳" },
     { id: "CI", name: "Côte d'Ivoire", code: "CI", flagEmoji: "🇨🇮" },

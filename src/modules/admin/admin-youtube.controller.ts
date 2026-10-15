@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { z } from "zod";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { prisma } from "../../config/prisma.js";
 import { YouTubeChannelService } from "../youtube/youtube-channel.service.js";
@@ -167,6 +168,7 @@ export class AdminYouTubeController {
       const channel = await prisma.youtubeChannelSync.findUnique({
         where: { podcastId },
         include: {
+          podcast: { select: { id: true, name: true, slug: true, status: true } },
           syncRuns: { orderBy: { startedAt: "desc" }, take: 10 },
           _count: { select: { importedVideos: true } },
         },
@@ -182,27 +184,50 @@ export class AdminYouTubeController {
    */
   static async updateSettings(req: AuthenticatedRequest, res: Response) {
     try {
+      const input = z.object({
+        channelTitle: z.string().trim().min(1).max(200).optional(),
+        channelDescription: z.string().trim().max(5000).optional(),
+        syncEnabled: z.boolean().optional(),
+        settings: z.record(z.unknown()).optional(),
+      }).strict().parse(req.body);
       const podcastId = req.params.podcastId;
       const channel = await prisma.youtubeChannelSync.findUnique({ where: { podcastId } });
       if (!channel) return sendError(res, "Chaîne non trouvée", "NOT_FOUND", 404);
 
       const currentSettings = (channel.importSettings as any) || {};
-      const updatedSettings = YouTubeChannelService.normalizeSettings(req.body.settings || {},currentSettings);
+      const updatedSettings = YouTubeChannelService.normalizeSettings(input.settings || {},currentSettings);
 
       const updated = await prisma.youtubeChannelSync.update({
         where: { podcastId },
         data: {
-          syncEnabled: req.body.syncEnabled !== undefined ? req.body.syncEnabled === true : channel.syncEnabled,
-          ...(req.body.syncEnabled===true?{nextSyncAt:new Date()}:req.body.syncEnabled===false?{nextSyncAt:null}:{}),
+          ...(input.channelTitle !== undefined ? { channelTitle: input.channelTitle } : {}),
+          ...(input.channelDescription !== undefined ? { channelDescription: input.channelDescription } : {}),
+          syncEnabled: input.syncEnabled ?? channel.syncEnabled,
+          ...(input.syncEnabled===true?{nextSyncAt:new Date()}:input.syncEnabled===false?{nextSyncAt:null}:{}),
           importSettings: updatedSettings as any,
-          syncStatus: req.body.syncEnabled === false ? "PAUSED" : (channel.syncStatus === "PAUSED" ? "IDLE" : channel.syncStatus),
+          syncStatus: input.syncEnabled === false ? "PAUSED" : input.syncEnabled === true && channel.syncStatus === "PAUSED" ? "IDLE" : channel.syncStatus,
         },
       });
 
       return sendSuccess(res, updated, "Paramètres mis à jour.");
     } catch (err: any) {
+      if (err instanceof z.ZodError) return sendError(res, "Vérifiez les réglages de la chaîne.", "VALIDATION_ERROR", 400, err.flatten());
       return sendError(res, err.message, "ADMIN_YOUTUBE_ERROR", 400);
     }
+  }
+
+  static async listVideos(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { page, q } = z.object({page:z.coerce.number().int().min(1).max(10000).default(1),q:z.string().trim().max(200).default("")}).parse(req.query);
+      const channel = await prisma.youtubeChannelSync.findUnique({where:{podcastId:req.params.podcastId},select:{id:true}});
+      if (!channel) return sendError(res,"Chaîne non trouvée","NOT_FOUND",404);
+      const where = {youtubeChannelId:channel.id,...(q?{videoTitle:{contains:q,mode:"insensitive" as const}}:{})};
+      const [items,total]=await Promise.all([
+        prisma.youtubeImportedVideo.findMany({where,orderBy:[{publishedAt:"desc"},{id:"asc"}],take:25,skip:(page-1)*25,include:{localEpisode:{select:{id:true,title:true,status:true,durationSeconds:true}}}}),
+        prisma.youtubeImportedVideo.count({where}),
+      ]);
+      return sendSuccess(res,{items,total,page,pageSize:25});
+    }catch(err){return sendError(res,"Impossible de charger les vidéos.","YOUTUBE_VIDEOS_ERROR",err instanceof z.ZodError?400:500);}
   }
 
   /**

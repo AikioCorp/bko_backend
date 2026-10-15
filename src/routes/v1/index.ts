@@ -1,3 +1,4 @@
+import { CountryAdminController } from "../../modules/referentials/country-admin.controller.js";
 import { supportRouter } from "../../modules/users/support.routes.js";
 import { requireStudioAccess } from "../../middlewares/studio.middleware.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
@@ -207,6 +208,8 @@ router.use("/creator", authenticateToken, requireStudioAccess);
 router.get("/me/studio-access", authenticateToken, CreatorController.getStudioAccess);
 router.post("/creator/market-access-requests", authenticateToken, MarketController.requestBetaAccess);
 
+router.get("/admin/countries/catalog", authenticateToken, requirePermission("markets.edit"), CountryAdminController.catalog);
+router.post("/admin/countries", authenticateToken, requirePermission("markets.edit"), CountryAdminController.create);
 router.get("/admin/markets", authenticateToken, requirePermission("markets.view"), MarketController.getAdminMarkets);
 router.get("/admin/markets/:countryCode", authenticateToken, requirePermission("markets.view"), MarketController.getMarketByCountryCode);
 router.patch("/admin/markets/:countryCode", authenticateToken, requirePermission("markets.edit"), MarketController.updateMarket);
@@ -306,6 +309,7 @@ router.post("/admin/podcasts/:id/rss/sync", authenticateToken, requirePermission
 router.post("/admin/youtube/preview", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.preview);
 router.get("/admin/youtube/imports", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.listChannels);
 router.post("/admin/youtube/imports", authenticateToken, (req,res,next)=>requirePermission(req.body.existingPodcastId?"catalog.edit":"catalog.create")(req,res,next), AdminYouTubeController.createImport);
+router.get("/admin/podcasts/:podcastId/youtube/videos", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.listVideos);
 router.get("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePermission("catalog.view"), AdminYouTubeController.getChannelStatus);
 router.post("/admin/podcasts/:podcastId/youtube/sync", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.syncChannelNow);
 router.patch("/admin/podcasts/:podcastId/youtube/settings", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.updateSettings);
