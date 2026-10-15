@@ -349,6 +349,8 @@ model User {
   // Monétisation & Abonnements
   subscriptions       UserSubscription[]
   paymentTransactions PaymentTransaction[]
+  studioBookings      StudioBooking[]
+  showSuggestions     ShowSuggestion[]
 }
 
 model Role {
@@ -1562,8 +1564,9 @@ model StudioOffer {
   iconName    String?
   isActive    Boolean   @default(true)
   order       Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  bookings    StudioBooking[]
 }
 
 // --- NOUVEAUX MODÈLES: LIKES, COMMENTAIRES & NOTES ---
@@ -1682,6 +1685,89 @@ model AdvertiserInquiry {
   updatedAt    DateTime  @updatedAt
 
   @@index([status, createdAt])
+}
+
+// ======================================================
+// RÉSERVATIONS & DEVIS STUDIO BAMAKO PODCAST
+// ======================================================
+
+enum StudioBookingNeed {
+  AUDIO_PODCAST
+  VIDEO_PODCAST
+  EDITING
+  SNIPPETS
+  COACHING
+  CUSTOM
+}
+
+enum StudioBookingStatus {
+  PENDING
+  REVIEWING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model StudioBooking {
+  id              String              @id @default(cuid())
+  reference       String              @unique
+  userId          String?
+  user            User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  needType        StudioBookingNeed
+  offerId         String?
+  offer           StudioOffer?        @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  contactName     String
+  podcastName     String?
+  company         String?
+  email           String
+  phone           String
+  countryCode     String?             @default("+223")
+
+  // Préférences & Besoins modulaires
+  preferredDate     String?           // Date préférée (YYYY-MM-DD)
+  timeSlot          String?           // Créneau horaire souhaité (Matin, Après-midi, Soir, etc.)
+  durationHours     Float?            // Durée estimée en heures
+  participantsCount Int?              // Nombre d'invités / participants
+  studioLocation    String?           // Studio Principal, Annexe, Conférence, VIP, Extérieur, etc.
+  shootingNeeds     String?           // Besoins tournage (multi-cam, prompteur, éclairage...)
+  mediaFilesUrl     String?           // Liens fichiers bruts (Drive / WeTransfer / Dropbox)
+  targetDeadline    String?           // Échéance souhaitée
+  expectedResult    String?           // Format attendu, rendu final
+  snippetsCount     Int?              // Nombre d'extraits pour clips verticaux
+  aspectRatios      String[]          // Formats de ratio vidéo (["9:16", "1:1", "16:9"])
+  subtitlesNeeded   Boolean?          @default(false)
+  coachingGoal      String?           // Objectif coaching / accompagnement
+  projectStage      String?           // Stade du projet (Idée, En production, Déjà diffusé)
+  notes             String?           @db.Text
+  estimatedPrice    String?
+  currency          String            @default("XOF")
+  status            StudioBookingStatus @default(PENDING)
+  adminNotes        String?           @db.Text
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId])
+}
+
+// ======================================================
+// SUGGESTIONS D'ÉMISSIONS / CRÉATEURS (COMMUNAUTÉ)
+// ======================================================
+
+model ShowSuggestion {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name      String
+  sourceUrl String?
+  details   String?  @db.Text
+  status    String   @default("PENDING") // PENDING, REVIEWED, ADDED, REJECTED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId])
 }
 
 // ======================================================

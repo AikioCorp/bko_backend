@@ -14,6 +14,8 @@ import { EpisodeController } from "../../modules/episodes/episode.controller.js"
 import { SearchController } from "../../modules/search/search.controller.js";
 import { DiscoveryController } from "../../modules/discovery/discovery.controller.js";
 import { StudioOfferController } from "../../modules/studio/StudioOfferController.js";
+import { StudioBookingController } from "../../modules/studio/studio-booking.controller.js";
+import { ShowSuggestionController } from "../../modules/discovery/show-suggestion.controller.js";
 import { ReferentialController } from "../../modules/referentials/referential.controller.js";
 import { CreatorController } from "../../modules/creator/creator.controller.js";
 import { UploadController } from "../../modules/media/upload.controller.js";
@@ -564,6 +566,18 @@ router.get("/admin/studio-offers", authenticateToken, requirePermission("offers.
 router.post("/admin/studio-offers", authenticateToken, requirePermission("offers.create"), StudioOfferController.createOffer);
 router.patch("/admin/studio-offers/:id", authenticateToken, requirePermission("offers.edit"), StudioOfferController.updateOffer);
 router.delete("/admin/studio-offers/:id", authenticateToken, requirePermission("offers.delete"), StudioOfferController.deleteOffer);
+
+// --- STUDIO BOOKINGS (RÉSERVATIONS & DEMANDES) ---
+router.post("/studio/bookings", optionalAuthenticateToken, StudioBookingController.submitBooking);
+router.get("/studio/bookings/my", authenticateToken, StudioBookingController.getMyBookings);
+router.get("/studio/bookings/reference/:reference", StudioBookingController.getBookingByReference);
+router.get("/admin/studio/bookings", authenticateToken, requirePermission("offers.view"), StudioBookingController.adminListBookings);
+router.patch("/admin/studio/bookings/:id/status", authenticateToken, requirePermission("offers.edit"), StudioBookingController.adminUpdateBooking);
+
+// --- SHOW SUGGESTIONS (PROPOSER UNE ÉMISSION) ---
+router.post("/discovery/suggestions", optionalAuthenticateToken, ShowSuggestionController.submitSuggestion);
+router.get("/admin/discovery/suggestions", authenticateToken, requirePermission("catalog.view"), ShowSuggestionController.adminListSuggestions);
+router.patch("/admin/discovery/suggestions/:id/status", authenticateToken, requirePermission("catalog.edit"), ShowSuggestionController.adminUpdateStatus);
 
 
 // --- ENGAGEMENT (Likes, Ratings, Comments) ---
