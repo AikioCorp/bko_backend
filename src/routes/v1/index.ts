@@ -525,6 +525,7 @@ router.post("/recommendations/events/interactions", optionalAuthenticateToken, R
 router.get("/admin/recommendations/preview/:userId", authenticateToken, requirePermission("catalog.view"), RecommendationController.adminPreview);
 
 router.get("/podcasts", PodcastController.listPodcasts);
+router.get("/podcasts/:slug/similar", PodcastController.getSimilarPodcasts);
 router.get("/podcasts/:slug", optionalAuthenticateToken, PodcastController.getPodcastBySlug);
 
 router.get("/episodes/catalog", EpisodeController.listCatalogEpisodes);

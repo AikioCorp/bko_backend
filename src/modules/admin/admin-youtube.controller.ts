@@ -104,6 +104,7 @@ export class AdminYouTubeController {
           selectedVideoIds,
           settings: {
             autoPublish: !!autoPublish,
+            excludeShorts: req.body.excludeShorts !== false,
             keepManualEdits: true,
             importScope: selectedVideoIds && selectedVideoIds.length > 0 ? "SELECT" : "ALL",
           },

@@ -209,10 +209,72 @@ export class PodcastService {
     // Visible publiquement seulement s'il est publié ou non répertorié (accessible par son lien).
     if (!podcast || (podcast.status !== "PUBLISHED" && podcast.status !== "UNLISTED")) return null;
 
+    const similarPodcasts = await this.getSimilarPodcasts(podcast.id);
+
     return {
       ...podcast,
       episodes: (episodeLimit ? podcast.episodes.slice(0, episodeLimit) : podcast.episodes).map(formatEpisodeWithMediaFlags),
       ...(episodeLimit ? { episodesPage: { hasMore: podcast.episodes.length > episodeLimit, nextOffset: episodeOffset + Math.min(episodeLimit, podcast.episodes.length) } } : {}),
+      similarPodcasts,
     };
+  }
+
+  /**
+   * Propose des émissions similaires basées sur les catégories communes, la langue ou la popularité.
+   */
+  static async getSimilarPodcasts(podcastId: string, limit = 8) {
+    const target = await prisma.podcast.findUnique({
+      where: { id: podcastId },
+      select: {
+        id: true,
+        primaryLanguageCode: true,
+        countryId: true,
+        categories: { select: { categoryId: true } },
+      },
+    });
+
+    if (!target) return [];
+
+    const categoryIds = target.categories.map((c) => c.categoryId);
+
+    // 1. Chercher des podcasts de la même catégorie
+    let similar = await prisma.podcast.findMany({
+      where: {
+        id: { not: target.id },
+        status: "PUBLISHED",
+        ...(categoryIds.length > 0 ? { categories: { some: { categoryId: { in: categoryIds } } } } : {}),
+      },
+      take: limit,
+      orderBy: [{ followers: { _count: "desc" } }, { qualityScore: "desc" }, { createdAt: "desc" }],
+      include: {
+        country: true,
+        primaryLanguage: true,
+        categories: { include: { category: true } },
+        _count: { select: { episodes: { where: { status: "PUBLISHED" } }, followers: true } },
+      },
+    });
+
+    // 2. Fallback si pas assez de podcasts dans la même catégorie : compléter avec des podcasts populaires
+    if (similar.length < limit) {
+      const existingIds = new Set([target.id, ...similar.map((s) => s.id)]);
+      const fallback = await prisma.podcast.findMany({
+        where: {
+          id: { notIn: Array.from(existingIds) },
+          status: "PUBLISHED",
+          ...(target.countryId ? { countryId: target.countryId } : {}),
+        },
+        take: limit - similar.length,
+        orderBy: [{ followers: { _count: "desc" } }, { qualityScore: "desc" }],
+        include: {
+          country: true,
+          primaryLanguage: true,
+          categories: { include: { category: true } },
+          _count: { select: { episodes: { where: { status: "PUBLISHED" } }, followers: true } },
+        },
+      });
+      similar = [...similar, ...fallback];
+    }
+
+    return similar;
   }
 }

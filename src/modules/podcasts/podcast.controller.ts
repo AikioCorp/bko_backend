@@ -65,4 +65,24 @@ export class PodcastController {
       return sendError(res, error.message || "Erreur lors de la récupération du podcast.");
     }
   }
+
+  static async getSimilarPodcasts(req: Request, res: Response) {
+    try {
+      const { slug } = req.params;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 8;
+      const podcast = await prisma.podcast.findUnique({
+        where: { slug },
+        select: { id: true },
+      });
+
+      if (!podcast) {
+        return sendError(res, "Podcast introuvable", "PODCAST_NOT_FOUND", 404);
+      }
+
+      const similar = await PodcastService.getSimilarPodcasts(podcast.id, limit);
+      return sendSuccess(res, similar, "Émissions similaires récupérées.");
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la récupération des émissions similaires.");
+    }
+  }
 }

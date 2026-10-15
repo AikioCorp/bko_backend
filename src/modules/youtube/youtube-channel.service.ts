@@ -9,6 +9,7 @@ export interface YouTubeImportSettings {
   autoPublish: boolean;
   filterKeywords?: string[];
   excludeKeywords?: string[];
+  excludeShorts?: boolean;
   minDurationSeconds?: number;
   importScope: "ALL" | "LAST_10" | "SELECT";
   keepManualEdits: boolean;
@@ -16,19 +17,196 @@ export interface YouTubeImportSettings {
 
 export class YouTubeChannelService {
   /**
-   * Résout une chaîne YouTube et prévisualise ses vidéos récentes disponibles dans le flux Atom.
+   * Récupère la liste des vidéos régulières de la chaîne depuis l'onglet /videos de YouTube.
+   * Cet onglet exclut nativement les Shorts et fournit les vrais épisodes longs.
+   */
+  static async fetchChannelVideosTab(channelId: string, customUrl?: string): Promise<Array<{
+    videoId: string;
+    title: string;
+    thumbnailUrl: string;
+    durationLabel?: string;
+    publishedAt?: Date | null;
+  }>> {
+    const targetUrl = customUrl ? `${customUrl.replace(/\/+$/, "")}/videos` : `https://www.youtube.com/channel/${channelId}/videos`;
+    try {
+      const res = await SsrfProtectionService.safeFetch(targetUrl, {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+      });
+
+      const html = res.text;
+      const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData\s*=\s*({.+?});/s);
+      if (!match) return [];
+
+      const data = JSON.parse(match[1]);
+      const tabs = data.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+      const videosTab = tabs.find((t: any) => t.tabRenderer?.title === "Vidéos" || t.tabRenderer?.title === "Videos");
+      const contents = videosTab?.tabRenderer?.content?.richGridRenderer?.contents || [];
+
+      const videos: Array<{ videoId: string; title: string; thumbnailUrl: string; durationLabel?: string; publishedAt?: Date | null }> = [];
+      let continuationToken: string | null = null;
+
+      for (const c of contents) {
+        if (c.continuationItemRenderer) {
+          continuationToken = c.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
+          continue;
+        }
+
+        const lockup = c.richItemRenderer?.content?.lockupViewModel;
+        if (lockup && lockup.contentId) {
+          const vid = lockup.contentId;
+          const title = lockup.metadata?.lockupMetadataViewModel?.title?.content || "";
+          const thumb = lockup.contentImage?.thumbnailViewModel?.image?.sources?.slice(-1)[0]?.url || `https://i1.ytimg.com/vi/${vid}/hqdefault.jpg`;
+          const timeOverlay = lockup.contentImage?.thumbnailViewModel?.overlays?.find((o: any) => o.thumbnailOverlayTimeStatusRenderer);
+          const durationLabel = timeOverlay?.thumbnailOverlayTimeStatusRenderer?.text?.content || "";
+
+          videos.push({
+            videoId: vid,
+            title,
+            thumbnailUrl: thumb,
+            durationLabel: durationLabel || undefined,
+            publishedAt: null,
+          });
+        } else if (c.richItemRenderer?.content?.videoRenderer) {
+          const vr = c.richItemRenderer.content.videoRenderer;
+          videos.push({
+            videoId: vr.videoId,
+            title: vr.title?.runs?.[0]?.text || "",
+            thumbnailUrl: vr.thumbnail?.thumbnails?.slice(-1)[0]?.url || `https://i1.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
+            durationLabel: vr.lengthText?.simpleText || undefined,
+            publishedAt: null,
+          });
+        }
+      }
+
+      // Récupérer une page de continuation supplémentaire (30 vidéos en plus)
+      if (continuationToken) {
+        try {
+          const contRes = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+            body: JSON.stringify({
+              continuation: continuationToken,
+              context: { client: { clientName: "WEB", clientVersion: "2.20231201.00.00" } },
+            }),
+          });
+          if (contRes.ok) {
+            const contData = await contRes.json();
+            const actions = contData.onResponseReceivedActions || [];
+            const contItems = actions[0]?.appendContinuationItemsAction?.continuationItems || [];
+            for (const c of contItems) {
+              const lockup = c.richItemRenderer?.content?.lockupViewModel;
+              if (lockup && lockup.contentId) {
+                const vid = lockup.contentId;
+                const title = lockup.metadata?.lockupMetadataViewModel?.title?.content || "";
+                const thumb = lockup.contentImage?.thumbnailViewModel?.image?.sources?.slice(-1)[0]?.url || `https://i1.ytimg.com/vi/${vid}/hqdefault.jpg`;
+                const timeOverlay = lockup.contentImage?.thumbnailViewModel?.overlays?.find((o: any) => o.thumbnailOverlayTimeStatusRenderer);
+                const durationLabel = timeOverlay?.thumbnailOverlayTimeStatusRenderer?.text?.content || "";
+
+                videos.push({
+                  videoId: vid,
+                  title,
+                  thumbnailUrl: thumb,
+                  durationLabel: durationLabel || undefined,
+                  publishedAt: null,
+                });
+              }
+            }
+          }
+        } catch {
+          // Si la continuation échoue, on conserve les vidéos déjà récupérées
+        }
+      }
+
+      return videos;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Résout une chaîne YouTube et prévisualise ses vidéos récentes disponibles dans le flux Atom et l'onglet Vidéos.
    */
   static async previewChannel(rawInput: string, podcastId?: string) {
     const resolved = await YouTubeResolverService.resolveChannel(rawInput);
     
-    // Récupérer le flux Atom de la chaîne
-    const feedRes = await SsrfProtectionService.safeFetch(resolved.feedUrl);
-    const parsed = RssParserService.parseXml(feedRes.text);
+    // Récupérer en parallèle : le flux Atom (15 vidéos récentes avec dates) et l'onglet /videos (60 vidéos régulières, sans Shorts)
+    const [feedResult, channelVideos] = await Promise.all([
+      SsrfProtectionService.safeFetch(resolved.feedUrl)
+        .then((res) => RssParserService.parseXml(res.text))
+        .catch(() => ({ items: [] as ParsedRssItem[] })),
+      this.fetchChannelVideosTab(resolved.channelId, resolved.customUrl),
+    ]);
+
+    // Combiner les deux sources de façon intelligente :
+    // 1. D'abord les vidéos de l'onglet /videos (qui exclut nativement les Shorts)
+    // 2. Compléter ou fusionner avec les métadonnées riches de l'Atom feed (dates de publication, descriptions)
+    const feedItemMap = new Map<string, ParsedRssItem>();
+    feedResult.items.forEach((item) => {
+      if (item.youtubeVideoId) feedItemMap.set(item.youtubeVideoId, item);
+    });
+
+    const regularVideoIds = new Set<string>();
+    const combinedVideos: Array<{
+      videoId: string;
+      title: string;
+      description: string;
+      publishedAt: Date | null;
+      thumbnailUrl: string;
+      canonicalUrl: string;
+      durationLabel?: string;
+      durationSeconds: number | null;
+      isLikelyShort: boolean;
+    }> = [];
+
+    // Ajouter toutes les vidéos de l'onglet /videos
+    for (const v of channelVideos) {
+      regularVideoIds.add(v.videoId);
+      const feedItem = feedItemMap.get(v.videoId);
+      combinedVideos.push({
+        videoId: v.videoId,
+        title: v.title || feedItem?.title || "Vidéo YouTube",
+        description: feedItem?.description ? feedItem.description.slice(0, 300) : "",
+        publishedAt: feedItem?.pubDate || null,
+        thumbnailUrl: v.thumbnailUrl || feedItem?.thumbnailUrl || `https://i1.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+        canonicalUrl: `https://www.youtube.com/watch?v=${v.videoId}`,
+        durationLabel: v.durationLabel,
+        durationSeconds: feedItem?.durationKnown ? feedItem.durationSeconds : null,
+        isLikelyShort: false, // Provient de l'onglet /videos, donc vidéo normale
+      });
+    }
+
+    // Ajouter les éventuelles vidéos de l'Atom feed non encore présentes
+    for (const item of feedResult.items) {
+      const vid = item.youtubeVideoId;
+      if (!vid || regularVideoIds.has(vid)) continue;
+
+      const isShort =
+        item.enclosureUrl.includes("/shorts/") ||
+        (item.durationKnown && item.durationSeconds > 0 && item.durationSeconds <= 60) ||
+        /#shorts?\b/i.test(item.title) ||
+        /#shorts?\b/i.test(item.description || "");
+
+      combinedVideos.push({
+        videoId: vid,
+        title: item.title,
+        description: item.description ? item.description.slice(0, 300) : "",
+        publishedAt: item.pubDate,
+        thumbnailUrl: item.thumbnailUrl,
+        canonicalUrl: item.enclosureUrl,
+        durationSeconds: item.durationKnown ? item.durationSeconds : null,
+        durationLabel: item.durationKnown ? this.formatDuration(item.durationSeconds) : undefined,
+        isLikelyShort: isShort,
+      });
+    }
 
     // Vérifier les vidéos déjà importées dans Bamako Podcast
-    const videoIds = parsed.items.map((i) => i.youtubeVideoId).filter(Boolean) as string[];
+    const allVideoIds = combinedVideos.map((v) => v.videoId);
     const alreadyImported = await prisma.youtubeImportedVideo.findMany({
-      where: { videoId: { in: videoIds } },
+      where: { videoId: { in: allVideoIds } },
       select: { videoId: true, localEpisodeId: true },
     });
     const importedMap = new Map(alreadyImported.map((a) => [a.videoId, a.localEpisodeId]));
@@ -37,9 +215,9 @@ export class YouTubeChannelService {
     const apiKey = process.env.YOUTUBE_API_KEY;
     const enrichedDurations = new Map<string, { durationSeconds: number; embeddable: boolean }>();
 
-    if (apiKey && videoIds.length > 0) {
+    if (apiKey && allVideoIds.length > 0) {
       try {
-        const idsParam = videoIds.slice(0, 50).join(",");
+        const idsParam = allVideoIds.slice(0, 50).join(",");
         const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,status&id=${idsParam}&key=${apiKey}`;
         const apiRes = await fetch(apiUrl);
         if (apiRes.ok) {
@@ -55,45 +233,47 @@ export class YouTubeChannelService {
       }
     }
 
-    const videos = parsed.items.map((item) => {
-      const vid = item.youtubeVideoId || "";
-      const enriched = enrichedDurations.get(vid);
-      const isAlready = importedMap.has(vid);
+    const videos = combinedVideos.map((v) => {
+      const enriched = enrichedDurations.get(v.videoId);
+      const isAlready = importedMap.has(v.videoId);
+      const durSec = enriched ? enriched.durationSeconds : v.durationSeconds;
+      const isLikelyShort = v.isLikelyShort || (enriched ? enriched.durationSeconds <= 60 : false);
 
-      // Détection des Shorts : indication basée sur le lien ou format court si durée connue
-      const isLikelyShort = item.enclosureUrl.includes("/shorts/") || (enriched ? enriched.durationSeconds <= 60 : false);
-
-      const durSec = enriched ? enriched.durationSeconds : (item.durationKnown ? item.durationSeconds : null);
       return {
-        videoId: vid,
-        youtubeVideoId: vid,
-        title: item.title,
-        description: item.description ? item.description.slice(0, 300) : "",
-        publishedAt: item.pubDate,
-        thumbnailUrl: item.thumbnailUrl,
-        canonicalUrl: item.enclosureUrl,
+        videoId: v.videoId,
+        youtubeVideoId: v.videoId,
+        title: v.title,
+        description: v.description,
+        publishedAt: v.publishedAt,
+        thumbnailUrl: v.thumbnailUrl,
+        canonicalUrl: v.canonicalUrl,
         duration: durSec,
         durationSeconds: durSec,
-        durationLabel: enriched 
-          ? this.formatDuration(enriched.durationSeconds) 
-          : (item.durationKnown ? this.formatDuration(item.durationSeconds) : "Durée inconnue"),
+        durationLabel: enriched
+          ? this.formatDuration(enriched.durationSeconds)
+          : v.durationLabel || (durSec ? this.formatDuration(durSec) : "Durée inconnue"),
         isLikelyShort,
         embeddable: enriched ? enriched.embeddable : true,
         alreadyImported: isAlready,
         isAlreadyImported: isAlready,
-        localEpisodeId: importedMap.get(vid) || null,
+        localEpisodeId: importedMap.get(v.videoId) || null,
       };
     });
+
+    const regularVideosCount = videos.filter((v) => !v.isLikelyShort).length;
+    const shortsCount = videos.filter((v) => v.isLikelyShort).length;
 
     return {
       channel: resolved,
       hasApiKey: !!apiKey,
       videosCount: videos.length,
+      regularVideosCount,
+      shortsCount,
       videos,
       items: videos,
-      note: apiKey 
-        ? "Durées et intégrations vérifiées via YouTube Data API v3." 
-        : "Durées indisponibles dans le flux standard sans clé d'API. L'aperçu affiche les vidéos récentes prêtes à l'intégration.",
+      note: apiKey
+        ? "Durées et intégrations vérifiées via YouTube Data API v3."
+        : `Aperçu étendu : ${videos.length} vidéos trouvées (${regularVideosCount} épisodes complets, ${shortsCount} Shorts).`,
     };
   }
 
@@ -133,6 +313,7 @@ export class YouTubeChannelService {
 
     const defaultSettings: YouTubeImportSettings = {
       autoPublish: false, // Brouillon par défaut par sécurité
+      excludeShorts: true, // Exclusion des Shorts par défaut
       importScope: payload.selectedVideoIds && payload.selectedVideoIds.length > 0 ? "SELECT" : "ALL",
       keepManualEdits: true,
       filterKeywords: [],

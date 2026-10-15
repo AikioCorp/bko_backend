@@ -5,7 +5,7 @@ import { SsrfProtectionService } from "../../services/ssrf-protection.service.js
 import { RssParserService, ParsedRssItem } from "../rss/rss-parser.service.js";
 import { slugify } from "../creator/creator-profile.service.js";
 import { NotificationService } from "../../services/notification.service.js";
-import { YouTubeImportSettings } from "./youtube-channel.service.js";
+import { YouTubeChannelService, YouTubeImportSettings } from "./youtube-channel.service.js";
 
 export const YOUTUBE_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 heures par défaut
 export const YOUTUBE_ERROR_BACKOFF_MS = 2 * 60 * 60 * 1000;
@@ -143,6 +143,7 @@ export class YouTubeWorkerService {
     const now = new Date();
     const settings: YouTubeImportSettings = {
       autoPublish: false,
+      excludeShorts: true,
       importScope: "ALL",
       keepManualEdits: true,
       filterKeywords: [],
@@ -168,17 +169,54 @@ export class YouTubeWorkerService {
     const selectedSet = selectedVideoIds ? new Set(selectedVideoIds) : null;
 
     try {
-      // 2. Fetch sécurisé du flux Atom YouTube
-      const feedRes = await SsrfProtectionService.safeFetch(channelSync.feedUrl);
-      if (feedRes.status !== 200) {
-        throw new Error(`HTTP_${feedRes.status}: Impossible de récupérer le flux de la chaîne YouTube.`);
+      // 2. Fetch du flux Atom YouTube
+      let allItems: ParsedRssItem[] = [];
+      try {
+        const feedRes = await SsrfProtectionService.safeFetch(channelSync.feedUrl);
+        if (feedRes.status === 200 && feedRes.text) {
+          const parsed = RssParserService.parseXml(feedRes.text);
+          allItems = parsed.items;
+        }
+      } catch (err: any) {
+        console.warn(`[YouTube Worker] Lecture du flux Atom:`, err?.message);
       }
 
-      const parsed = RssParserService.parseXml(feedRes.text);
-      counts.discovered = parsed.items.length;
+      // Si l'import initial a des vidéos sélectionnées qui ne figurent pas dans les 15 du flux Atom,
+      // on récupère également l'onglet /videos pour traiter toutes les vidéos sélectionnées par l'utilisateur
+      const existingIds = new Set(allItems.map((i) => i.youtubeVideoId).filter(Boolean));
+      const missingSelected = selectedVideoIds ? selectedVideoIds.filter((id) => !existingIds.has(id)) : [];
 
-      // 3. Traiter chaque vidéo du flux
-      for (const item of parsed.items) {
+      if (missingSelected.length > 0 || (isInitialImport && allItems.length <= 15)) {
+        try {
+          const tabVideos = await YouTubeChannelService.fetchChannelVideosTab(
+            channelSync.channelId,
+            channelSync.customUrl || undefined
+          );
+          for (const tv of tabVideos) {
+            if (!existingIds.has(tv.videoId)) {
+              allItems.push({
+                title: tv.title,
+                description: "",
+                pubDate: tv.publishedAt || new Date(),
+                enclosureUrl: `https://www.youtube.com/watch?v=${tv.videoId}`,
+                durationSeconds: 0,
+                durationKnown: false,
+                thumbnailUrl: tv.thumbnailUrl,
+                youtubeVideoId: tv.videoId,
+                fingerprint: tv.videoId,
+              });
+              existingIds.add(tv.videoId);
+            }
+          }
+        } catch (e: any) {
+          console.warn("[YouTube Worker] Récupération de l'onglet vidéos étendu:", e?.message);
+        }
+      }
+
+      counts.discovered = allItems.length;
+
+      // 3. Traiter chaque vidéo
+      for (const item of allItems) {
         const videoId = item.youtubeVideoId;
         if (!videoId) {
           counts.skipped++;
@@ -187,6 +225,25 @@ export class YouTubeWorkerService {
 
         // Si l'import initial cible une sélection explicite de vidéos
         if (selectedSet && !selectedSet.has(videoId)) {
+          counts.skipped++;
+          continue;
+        }
+
+        // Si ce n'est pas l'import initial et que la chaîne a un scope "SELECT",
+        // ne pas importer automatiquement les nouvelles vidéos non désirées
+        if (!isInitialImport && settings.importScope === "SELECT") {
+          counts.skipped++;
+          continue;
+        }
+
+        // Filtrage des Shorts si excludeShorts est actif (par défaut true)
+        const isShort =
+          item.enclosureUrl.includes("/shorts/") ||
+          (item.durationKnown && item.durationSeconds > 0 && item.durationSeconds <= 60) ||
+          /#shorts?\b/i.test(item.title) ||
+          /#shorts?\b/i.test(item.description || "");
+
+        if (settings.excludeShorts !== false && isShort) {
           counts.skipped++;
           continue;
         }
