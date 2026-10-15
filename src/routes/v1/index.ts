@@ -257,6 +257,7 @@ router.post("/admin/editorial/sections", authenticateToken, requirePermission("c
 router.post("/admin/editorial/sections/reorder", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.reorderSections);
 router.get("/admin/editorial/sections/:id", authenticateToken, requirePermission("catalog.view"), AdminEditorialController.getSection);
 router.patch("/admin/editorial/sections/:id", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.updateSection);
+router.delete("/admin/editorial/sections/:id", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.deleteSection);
 router.post("/admin/editorial/sections/:id/items", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.addSectionItem);
 router.delete("/admin/editorial/sections/items/:itemId", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.removeSectionItem);
 router.post("/admin/editorial/sections/:id/items/reorder", authenticateToken, requirePermission("catalog.edit"), AdminEditorialController.reorderSectionItems);

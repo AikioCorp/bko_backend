@@ -52,7 +52,7 @@ export class AdminEditorialService {
         subtitle: data.subtitle || null,
         type: data.type as EditorialSectionType,
         sourceMode: (data.sourceMode || "MANUAL") as EditorialSourceMode,
-        isActive: data.isActive ?? false,
+        isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
         position,
         maxItems: data.maxItems ? Number(data.maxItems) : 12,
         isFixedPlacement: Boolean(data.isFixedPlacement),
@@ -78,6 +78,12 @@ export class AdminEditorialService {
         ...(data.selectionStrategy !== undefined ? { selectionStrategy: data.selectionStrategy } : {}),
         ...(data.strategyParams !== undefined ? { strategyParams: data.strategyParams } : {}),
       }
+    });
+  }
+
+  static async deleteSection(id: string) {
+    return prisma.editorialSection.delete({
+      where: { id }
     });
   }
   

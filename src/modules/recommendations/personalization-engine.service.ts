@@ -315,7 +315,7 @@ export class PersonalizationEngineService {
 
         const sectionItems = validItems.map((item, idx) => ({
           id: `item_ed_${item.id}`,
-          targetType: (item.podcast ? "PODCAST" : "EPISODE") as "PODCAST" | "EPISODE",
+          targetType: (item.podcast ? "PODCAST" : item.collection ? "COLLECTION" : "EPISODE") as any,
           position: idx,
           reason: "Sélection éditoriale",
           attribution: {
@@ -326,6 +326,7 @@ export class PersonalizationEngineService {
           },
           episode: item.episode || undefined,
           podcast: item.podcast || undefined,
+          collection: item.collection || undefined,
         }));
 
         sections.push({
@@ -422,6 +423,56 @@ export class PersonalizationEngineService {
       );
     } catch (_) {
       heroSlides = [];
+    }
+
+    // Intégrer les sections éditoriales de type HERO en tête des diapositives
+    const editorialHeroSections = editorialSections.filter(s => s.type === "HERO" && s.items && s.items.length > 0);
+    if (editorialHeroSections.length > 0) {
+      const editorialHeroSlides: any[] = [];
+      for (const sec of editorialHeroSections) {
+        for (const item of sec.items) {
+          if (item.episode && item.episode.status === "PUBLISHED" && (!item.episode.podcast || item.episode.podcast.status === "PUBLISHED")) {
+            editorialHeroSlides.push({
+              kind: "popular",
+              label: sec.title || "À la une",
+              reason: sec.subtitle || "Sélection de la rédaction",
+              episode: item.episode,
+            });
+          } else if (item.podcast && item.podcast.status === "PUBLISHED") {
+            const latestEp = await prisma.episode.findFirst({
+              where: { podcastId: item.podcast.id, status: "PUBLISHED" },
+              orderBy: { publishedAt: "desc" },
+              include: {
+                podcast: {
+                  select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                    cover: true,
+                    primaryLanguageCode: true,
+                    primaryLanguage: true,
+                    categories: { include: { category: true } },
+                  },
+                },
+                mediaSources: true,
+                language: true,
+              },
+            });
+            if (latestEp) {
+              editorialHeroSlides.push({
+                kind: "popular",
+                label: sec.title || "À la une",
+                reason: sec.subtitle || "Sélection de la rédaction",
+                episode: latestEp,
+              });
+            }
+          }
+        }
+      }
+      if (editorialHeroSlides.length > 0) {
+        const existingEpIds = new Set(editorialHeroSlides.map(s => s.episode.id));
+        heroSlides = [...editorialHeroSlides, ...heroSlides.filter(s => !existingEpIds.has(s.episode.id))];
+      }
     }
 
     // Editorial, history and hero pools are not all built by the category

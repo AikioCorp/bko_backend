@@ -41,6 +41,13 @@ export class AdminEditorialController {
     } catch (e) { return AdminEditorialController.handleError(res, e); }
   }
 
+  static async deleteSection(req: AuthenticatedRequest, res: Response) {
+    try {
+      await AdminEditorialService.deleteSection(req.params.id);
+      return sendSuccess(res, null, "Section supprimée");
+    } catch (e) { return AdminEditorialController.handleError(res, e); }
+  }
+
   static async reorderSections(req: AuthenticatedRequest, res: Response) {
     try {
       await AdminEditorialService.updateSectionsOrder(req.body.ids);
