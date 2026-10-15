@@ -1,3 +1,4 @@
+import { PermissionService } from "./permission.service.js";
 import { PodcastMemberRole } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { MailService } from "./mail/mail.service.js";
@@ -167,20 +168,23 @@ export class NotificationService {
   // ───────────── Lecture par l'utilisateur ─────────────
 
   static async list(userId: string, limit: number, before?: string) {
+    const access = await PermissionService.getAccess(userId);
+    const visible = access.permissions.has("support.view") ? {} : { type: { not: "SUPPORT_STAFF" } };
     const [items, unread] = await Promise.all([
       prisma.notification.findMany({
-        where: { userId, ...(before ? { createdAt: { lt: new Date(before) } } : {}) },
+        where: { userId, ...visible, ...(before ? { createdAt: { lt: new Date(before) } } : {}) },
         orderBy: { createdAt: "desc" },
         take: limit,
         select: { id: true, type: true, title: true, body: true, link: true, readAt: true, createdAt: true },
       }),
-      prisma.notification.count({ where: { userId, readAt: null } }),
+      prisma.notification.count({ where: { userId, ...visible, readAt: null } }),
     ]);
     return { items, unread };
   }
 
   static async unreadCount(userId: string) {
-    return prisma.notification.count({ where: { userId, readAt: null } });
+    const access = await PermissionService.getAccess(userId);
+    return prisma.notification.count({ where: { userId, readAt: null, ...(access.permissions.has("support.view") ? {} : {type:{not:"SUPPORT_STAFF"}}) } });
   }
 
   /** Marque comme lues les notifications données (ou toutes). Filtrée par userId : pas d'accès aux notifications d'autrui. */

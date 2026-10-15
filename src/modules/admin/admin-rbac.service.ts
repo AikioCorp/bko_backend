@@ -45,7 +45,7 @@ export class AdminRbacService {
   }
 
   private static cleanPermissions(input: string[]): string[] {
-    const unique = [...new Set(input)];
+    const unique = [...new Set(input.flatMap(p=>p.endsWith(".view")?[p]:[p,p.split(".")[0]+".view"]))];
     if (!unique.every(isValidPermission)) throw new Error("UNKNOWN_PERMISSION");
     return unique;
   }

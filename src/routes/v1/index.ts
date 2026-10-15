@@ -35,7 +35,7 @@ import { AdController } from "../../modules/ads/ad.controller.js";
 import { RecommendationController } from "../../modules/recommendations/recommendation.controller.js";
 import { SubscriptionController } from "../../modules/subscriptions/subscription.controller.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
-import { authenticateToken, optionalAuthenticateToken, requireAdmin } from "../../middlewares/auth.middleware.js";
+import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
 import { prisma } from "../../config/prisma.js";
 
@@ -176,11 +176,11 @@ router.post("/subscriptions/cancel", authenticateToken, SubscriptionController.c
 router.get("/episodes/:id/access", optionalAuthenticateToken, SubscriptionController.checkEpisodeAccess);
 
 // Admin: gestion des formules d'abonnement & tarifs
-router.get("/admin/subscription-plans", authenticateToken, SubscriptionController.adminListPlans);
-router.post("/admin/subscription-plans", authenticateToken, SubscriptionController.adminCreatePlan);
-router.patch("/admin/subscription-plans/:id", authenticateToken, SubscriptionController.adminUpdatePlan);
-router.patch("/admin/subscription-plans/:id/toggle", authenticateToken, SubscriptionController.adminTogglePlan);
-router.delete("/admin/subscription-plans/:id", authenticateToken, SubscriptionController.adminDeletePlan);
+router.get("/admin/subscription-plans", authenticateToken, requirePermission("subscriptions.view"), SubscriptionController.adminListPlans);
+router.post("/admin/subscription-plans", authenticateToken, requirePermission("subscriptions.create"), SubscriptionController.adminCreatePlan);
+router.patch("/admin/subscription-plans/:id", authenticateToken, requirePermission("subscriptions.edit"), SubscriptionController.adminUpdatePlan);
+router.patch("/admin/subscription-plans/:id/toggle", authenticateToken, requirePermission("subscriptions.edit"), SubscriptionController.adminTogglePlan);
+router.delete("/admin/subscription-plans/:id", authenticateToken, requirePermission("subscriptions.delete"), SubscriptionController.adminDeletePlan);
 
 // --- NOTIFICATIONS DANS L'APPLICATION ---
 router.get("/me/notifications", authenticateToken, NotificationController.list);
@@ -223,8 +223,8 @@ router.patch("/creator/transcripts/segments/:id", authenticateToken, TranscriptC
 router.post("/creator/episodes/:episodeId/chapters", authenticateToken, TranscriptController.updateChapters);
 
 // --- BACKOFFICE ADMIN & CMS
-router.get("/admin/media", authenticateToken, requirePermission("catalog.view"), AdminMediaController.list);
-router.delete("/admin/media/:id", authenticateToken, requirePermission("catalog.delete"), AdminMediaController.remove);
+router.get("/admin/media", authenticateToken, requirePermission("storage.view"), AdminMediaController.list);
+router.delete("/admin/media/:id", authenticateToken, requirePermission("storage.edit"), AdminMediaController.remove);
 router.get("/admin/dashboard", authenticateToken, requirePermission("dashboard.view"), AdminController.getDashboard);
 router.get("/admin/catalog", authenticateToken, requirePermission("catalog.view"), AdminController.getCatalog);
 router.get("/admin/episodes", authenticateToken, requirePermission("catalog.view"), AdminController.listAllEpisodes);
@@ -235,7 +235,7 @@ import { AdminMediaController } from "../../modules/admin/admin-media.controller
 import { AdminEpisodeController } from "../../modules/admin/admin-episode.controller.js";
 
 // --- ADMIN EPISODES V2 (Création & Édition détaillée) ---
-router.post("/admin/podcasts/:podcastId/episodes", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.createDraft);
+router.post("/admin/podcasts/:podcastId/episodes", authenticateToken, requirePermission("catalog.create"), AdminEpisodeController.createDraft);
 router.get("/admin/episodes/:id", authenticateToken, requirePermission("catalog.view"), AdminEpisodeController.get);
 router.patch("/admin/episodes/:id", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.update);
 router.post("/admin/episodes/:id/audio/uploads", authenticateToken, requirePermission("catalog.edit"), AdminEpisodeController.createAudioUpload);
@@ -311,13 +311,13 @@ router.delete("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePe
 router.post("/admin/podcasts/:podcastId/youtube/historical-import", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.historicalImport);
 
 // --- ADMIN CATEGORIES & LANGUAGES ---
-router.get("/admin/categories", authenticateToken, AdminClassificationController.listCategories);
+router.get("/admin/categories", authenticateToken, requirePermission("catalog.view"), AdminClassificationController.listCategories);
 router.post("/admin/categories", authenticateToken, requirePermission("catalog.create"), AdminClassificationController.createCategory);
 router.put("/admin/categories/:id", authenticateToken, requirePermission("catalog.edit"), AdminClassificationController.updateCategory);
 router.delete("/admin/categories/:id", authenticateToken, requirePermission("catalog.delete"), AdminClassificationController.deleteCategory);
 
 
-router.get("/admin/languages", authenticateToken, AdminClassificationController.listLanguages);
+router.get("/admin/languages", authenticateToken, requirePermission("catalog.view"), AdminClassificationController.listLanguages);
 router.post("/admin/languages", authenticateToken, requirePermission("catalog.create"), AdminClassificationController.createLanguage);
 router.put("/admin/languages/:code", authenticateToken, requirePermission("catalog.edit"), AdminClassificationController.updateLanguage);
 router.delete("/admin/languages/:code", authenticateToken, requirePermission("catalog.delete"), AdminClassificationController.deleteLanguage);
@@ -342,8 +342,6 @@ router.post("/admin/users/:id/creator-verification", authenticateToken, requireP
 router.post("/admin/users/:id/sessions/revoke", authenticateToken, requirePermission("users.edit"), AdminConsoleController.revokeUserSessions);
 router.post("/admin/users/:id/subscriptions", authenticateToken, requirePermission("users.edit"), AdminConsoleController.grantUserSubscription);
 router.post("/admin/users/:id/subscriptions/:subId/cancel", authenticateToken, requirePermission("users.edit"), AdminConsoleController.cancelUserSubscription);
-router.get("/admin/subscription-plans", authenticateToken, requirePermission("settings.view"), AdminConsoleController.listSubscriptionPlans);
-router.post("/admin/subscription-plans", authenticateToken, requirePermission("settings.edit"), AdminConsoleController.createSubscriptionPlan);
 router.get("/admin/creators", authenticateToken, requirePermission("users.view"), AdminConsoleController.listCreators);
 router.post("/admin/creators", authenticateToken, requirePermission("users.edit"), AdminConsoleController.createCreator);
 router.patch("/admin/creators/:id", authenticateToken, requirePermission("users.edit"), AdminConsoleController.updateCreator);
@@ -352,6 +350,7 @@ router.post("/admin/creators/:id/assign-podcast", authenticateToken, requirePerm
 router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
 router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);
 router.get("/admin/roles", authenticateToken, requirePermission("roles.view"), AdminConsoleController.listRoles);
+router.get("/admin/user-subscription-plans", authenticateToken, requirePermission("users.edit"), AdminConsoleController.listSubscriptionPlans);
 router.get("/admin/assignable-roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.assignableRoles);
 router.post("/admin/roles", authenticateToken, requirePermission("roles.create"), AdminConsoleController.createRole);
 router.put("/admin/roles/:id", authenticateToken, requirePermission("roles.edit"), AdminConsoleController.updateRole);
@@ -535,13 +534,13 @@ router.post("/ads/:id/impression", AdController.recordImpression);
 router.post("/ads/:id/click", AdController.recordClick);
 router.post("/advertiser-inquiries", AdController.submitInquiry);
 
-router.get("/admin/ads", authenticateToken, AdController.listAdminCampaigns);
-router.post("/admin/ads", authenticateToken, AdController.createAdminCampaign);
-router.patch("/admin/ads/:id", authenticateToken, AdController.updateAdminCampaign);
-router.delete("/admin/ads/:id", authenticateToken, AdController.deleteAdminCampaign);
+router.get("/admin/ads", authenticateToken, requirePermission("ads.view"), AdController.listAdminCampaigns);
+router.post("/admin/ads", authenticateToken, requirePermission("ads.create"), AdController.createAdminCampaign);
+router.patch("/admin/ads/:id", authenticateToken, requirePermission("ads.edit"), AdController.updateAdminCampaign);
+router.delete("/admin/ads/:id", authenticateToken, requirePermission("ads.delete"), AdController.deleteAdminCampaign);
 
-router.get("/admin/advertiser-inquiries", authenticateToken, AdController.listAdminInquiries);
-router.patch("/admin/advertiser-inquiries/:id", authenticateToken, AdController.updateAdminInquiry);
+router.get("/admin/advertiser-inquiries", authenticateToken, requirePermission("ads.view"), AdController.listAdminInquiries);
+router.patch("/admin/advertiser-inquiries/:id", authenticateToken, requirePermission("ads.edit"), AdController.updateAdminInquiry);
 router.get("/podcasts/:podcastSlug/episodes/:episodeSlug", optionalAuthenticateToken, EpisodeController.getEpisodeBySlug);
 
 router.get("/categories", ReferentialController.getCategories);
@@ -561,10 +560,10 @@ router.get("/languages/:code", ReferentialController.getLanguageByCode);
 router.get("/studio-offers", StudioOfferController.getActiveOffers); // Public
 
 // Admin routes
-router.get("/admin/studio-offers", authenticateToken, requireAdmin, StudioOfferController.getAllOffers);
-router.post("/admin/studio-offers", authenticateToken, requireAdmin, StudioOfferController.createOffer);
-router.patch("/admin/studio-offers/:id", authenticateToken, requireAdmin, StudioOfferController.updateOffer);
-router.delete("/admin/studio-offers/:id", authenticateToken, requireAdmin, StudioOfferController.deleteOffer);
+router.get("/admin/studio-offers", authenticateToken, requirePermission("offers.view"), StudioOfferController.getAllOffers);
+router.post("/admin/studio-offers", authenticateToken, requirePermission("offers.create"), StudioOfferController.createOffer);
+router.patch("/admin/studio-offers/:id", authenticateToken, requirePermission("offers.edit"), StudioOfferController.updateOffer);
+router.delete("/admin/studio-offers/:id", authenticateToken, requirePermission("offers.delete"), StudioOfferController.deleteOffer);
 
 
 // --- ENGAGEMENT (Likes, Ratings, Comments) ---

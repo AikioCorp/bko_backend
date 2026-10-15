@@ -32,8 +32,12 @@ const requireSupportIdentity:RequestHandler=(req:AuthenticatedRequest,res,next)=
 const safe = (ticket: any) => { const {accessHash, ...data}=ticket; return {...data,ticketId:data.id}; };
 // Email jobs are committed with the ticket mutation; worker failures do not lose notifications.
 async function notify(tx: any, ticket: any, event: string, key?: string) {
-  const roles = await tx.userRole.findMany({where:{role:{OR:[{name:"SUPER_ADMIN"},{rolePermissions:{some:{permission:{code:"support.view"}}}}]}},select:{user:{select:{email:true,isSuspended:true}}}});
+  const roles = await tx.userRole.findMany({where:{role:{OR:[{name:"SUPER_ADMIN"},{rolePermissions:{some:{permission:{code:"support.view"}}}}]}},select:{user:{select:{id:true,email:true,isSuspended:true}}}});
   const admins = [...new Set<string>(roles.filter((r:any)=>!r.user.isSuspended).map((r:any)=>r.user.email))];
+  const staff = [...new Set<string>(roles.filter((r:any)=>!r.user.isSuspended).map((r:any)=>r.user.id))];
+  const notifications = staff.map(userId=>({userId,type:"SUPPORT_STAFF",title:event,body:ticket.subject,link:`/admin/support?ticket=${encodeURIComponent(ticket.id)}`}));
+  if(ticket.userId && !staff.includes(ticket.userId)) notifications.push({userId:ticket.userId,type:"SUPPORT_USER",title:event,body:ticket.subject,link:`/support?ticket=${encodeURIComponent(ticket.id)}`});
+  if(notifications.length) await tx.notification.createMany({data:notifications});
   const base = (process.env.APP_URL || "https://www.bamakopodcast.studio").replace(/\/$/,"");
   key = key || accessKey(ticket.id);
   const userLink = `${base}/support?ticket=${encodeURIComponent(ticket.id)}${key?`#key=${key}`:""}`;
@@ -91,5 +95,6 @@ supportRouter.get("/admin/support-tickets",authenticateToken,requirePermission("
   const where={status}; const [items,total]=await Promise.all([prisma.supportTicket.findMany({where,orderBy:[{updatedAt:"desc"},{id:"asc"}],take:25,skip:(page-1)*25}),prisma.supportTicket.count({where})]);
   return {items:items.map(safe),total,page};
 }));
+supportRouter.get("/admin/support-tickets/count",authenticateToken,requirePermission("support.view"),wrap(async()=>({open:await prisma.supportTicket.count({where:{status:"OPEN"}})})));
 supportRouter.get("/admin/support-tickets/:id",authenticateToken,requirePermission("support.view"),wrap(async req=>safe(await access(req,true))));
 supportRouter.post("/admin/support-tickets/:id/messages",authenticateToken,requirePermission("support.edit"),mutate(true));

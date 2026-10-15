@@ -9,11 +9,12 @@ import { JWT_SECRET } from '../src/config/jwt.js';
 
 test('support: private conversation, staff permissions, closure, email outbox', async () => {
   const originals = {transaction:prisma.$transaction,find:prisma.supportTicket.findUnique,user:prisma.user.findUnique,access:PermissionService.getAccess};
-  let ticket:any; const jobs:any[]=[]; const messages:any[]=[];
+  let ticket:any; const jobs:any[]=[]; const notifications:any[]=[]; const messages:any[]=[];
   const tx:any={
-    $queryRaw:async()=>[],userRole:{findMany:async()=>[{user:{email:'agent@example.com',isSuspended:false}}]},
+    $queryRaw:async()=>[],userRole:{findMany:async()=>[{user:{id:'agent',email:'agent@example.com',isSuspended:false}}]},
     supportTicket:{create:async({data}:any)=>{ticket={...data,status:'OPEN',createdAt:new Date(),updatedAt:new Date()};messages.push({id:'first',body:data.messages.create.body,kind:'USER'});return ticket;},findUniqueOrThrow:async()=>ticket,update:async({data}:any)=>(ticket={...ticket,...data,status:data.status||ticket.status})},
     supportMessage:{create:async({data}:any)=>messages.push({id:String(messages.length),...data})},
+    notification:{createMany:async({data}:any)=>notifications.push(...data)},
     auditLog:{create:async()=>({})},jobQueueItem:{create:async({data}:any)=>{jobs.push(data);return data;}},
   };
   prisma.$transaction=(async(fn:any)=>fn(tx)) as any;
@@ -29,7 +30,7 @@ test('support: private conversation, staff permissions, closure, email outbox', 
     assert.equal((await request('/support/tickets',{email:'bad',subject:'x',description:'x'})).status,400);
     const created=await request('/support/tickets',{email:'user@example.com',subject:'Compte bloqué',description:'Je souhaite une révision.'});
     assert.equal(created.status,201);const id=created.json.data.id,key=created.json.data.accessToken;
-    assert.equal(created.json.data.accessHash,undefined);assert.equal(jobs.length,2);
+    assert.equal(created.json.data.accessHash,undefined);assert.equal(jobs.length,2);assert.equal(notifications[0].userId,'agent');assert.equal(notifications[0].link,`/admin/support?ticket=${id}`);
     assert.equal((await request(`/support/tickets/${id}`)).status,404);
     const hdr={'X-Support-Key':key};assert.equal((await request(`/support/tickets/${id}`,undefined,hdr)).status,200);
     assert.equal((await request(`/support/tickets/${id}/messages`,{status:'CLOSED'},hdr)).status,404);

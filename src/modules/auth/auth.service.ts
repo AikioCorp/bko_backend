@@ -10,21 +10,59 @@ import { NotificationService } from "../../services/notification.service.js";
 
 const BCRYPT_ROUNDS = 12;
 
+export interface SuspendedUserDetails {
+  id?: string;
+  email?: string;
+  fullName?: string;
+  avatar?: string | null;
+  suspendedReason?: string | null;
+  suspendedAt?: Date | null;
+}
+
 export class AccountSuspendedError extends Error {
   code = "ACCOUNT_SUSPENDED";
   details: {
     reason: string;
     isPermanent: boolean;
     suspendedAt?: string;
+    userId?: string;
+    email?: string;
+    fullName?: string;
+    avatar?: string | null;
+    supportToken?: string;
   };
 
-  constructor(reason?: string | null, suspendedAt?: Date | null) {
-    super(reason || "Votre compte a été suspendu par l'administration.");
+  constructor(userOrReason?: SuspendedUserDetails | string | null, suspendedAt?: Date | null) {
+    const isObj = typeof userOrReason === "object" && userOrReason !== null;
+    const user: SuspendedUserDetails = isObj
+      ? userOrReason
+      : { suspendedReason: userOrReason as string | null, suspendedAt };
+    const reason = user.suspendedReason || "Votre compte a été suspendu par l'administration.";
+    super(reason);
     this.name = "AccountSuspendedError";
+
+    let supportToken: string | undefined;
+    if (user.id && user.email) {
+      try {
+        supportToken = jwt.sign(
+          { id: user.id, email: user.email, roles: [], isSuspended: true },
+          JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+      } catch (_) {}
+    }
+
     this.details = {
-      reason: reason || "Votre compte a été suspendu par l'administration.",
+      reason,
       isPermanent: true,
-      suspendedAt: suspendedAt ? suspendedAt.toISOString() : undefined,
+      suspendedAt: user.suspendedAt
+        ? user.suspendedAt.toISOString()
+        : (suspendedAt ? suspendedAt.toISOString() : undefined),
+      userId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      avatar: user.avatar,
+      supportToken,
     };
   }
 }
@@ -323,7 +361,7 @@ export class AuthService {
     }
 
     if (user.isSuspended) {
-      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+      throw new AccountSuspendedError(user);
     }
 
     const inputCode = String(params.otpCode || "").trim();
@@ -474,7 +512,7 @@ export class AuthService {
     }
 
     if (user.isSuspended) {
-      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+      throw new AccountSuspendedError(user);
     }
 
     // Le compte doit avoir été vérifié par OTP avant de pouvoir se connecter
@@ -588,7 +626,7 @@ export class AuthService {
     }
 
     if (storedToken.user.isSuspended) {
-      throw new AccountSuspendedError(storedToken.user.suspendedReason, storedToken.user.suspendedAt);
+      throw new AccountSuspendedError(storedToken.user);
     }
 
     // Révocation de l'ancien token (Rotation)
@@ -696,7 +734,7 @@ export class AuthService {
     });
 
     if (user && user.isSuspended) {
-      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+      throw new AccountSuspendedError(user);
     }
 
     if (!user) {
@@ -878,7 +916,7 @@ export class AuthService {
       });
     } else {
       if (user.isSuspended) {
-        throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+        throw new AccountSuspendedError(user);
       }
       await prisma.user.update({
         where: { id: user.id },
@@ -943,7 +981,7 @@ export class AuthService {
     }
 
     if (user.isSuspended) {
-      throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
+      throw new AccountSuspendedError(user);
     }
 
     const code = String(params.otpCode || "").trim();

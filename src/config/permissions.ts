@@ -12,6 +12,9 @@ export interface Feature {
 }
 
 export const FEATURES: Feature[] = [
+  { key: "ads", label: "Publicités et annonceurs", description: "Campagnes publicitaires et demandes annonceurs", caps: ["view", "create", "edit", "delete"] },
+  { key: "offers", label: "Tarifs Studio", description: "Offres et tarifs de production", caps: ["view", "create", "edit", "delete"] },
+  { key: "subscriptions", label: "Abonnements et Pass", description: "Gestion des formules d’abonnement", caps: ["view", "create", "edit", "delete"] },
   { key: "support", label: "Assistance", description: "Consulter les tickets, répondre et fermer les demandes", caps: ["view", "edit"] },
   { key: "dashboard", label: "Supervision & métriques", description: "Tableau de bord, indicateurs globaux", caps: ["view"] },
   { key: "catalog", label: "Podcasts & séries", description: "Catalogue, personnes, organisations, collections, fusions", caps: ["view", "create", "edit", "delete"] },
@@ -68,7 +71,7 @@ export const ROLE_TEMPLATES: { key: string; name: string; description: string; p
     key: "support",
     name: "SUPPORT",
     description: "Support",
-    permissions: ["dashboard.view", "users.view", "storage.view", "support.view", "support.edit"],
+    permissions: ["support.view", "support.edit"],
   },
   {
     key: "tech",

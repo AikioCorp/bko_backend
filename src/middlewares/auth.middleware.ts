@@ -17,6 +17,9 @@ interface CachedAccountStatus {
   isSuspended: boolean;
   suspendedReason?: string | null;
   suspendedAt?: Date | null;
+  fullName?: string;
+  email?: string;
+  avatar?: string | null;
   cachedAt: number;
 }
 
@@ -31,22 +34,32 @@ export function invalidateAccountStatusCache(userId?: string) {
   }
 }
 
-export async function checkUserSuspended(userId: string): Promise<{ isSuspended: boolean; suspendedReason?: string | null; suspendedAt?: Date | null }> {
+export async function checkUserSuspended(userId: string): Promise<Omit<CachedAccountStatus, "cachedAt">> {
   const cached = statusCache.get(userId);
   if (cached && Date.now() - cached.cachedAt < STATUS_CACHE_TTL) {
     return cached;
   }
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { isSuspended: true, suspendedReason: true, suspendedAt: true },
+    select: {
+      isSuspended: true,
+      suspendedReason: true,
+      suspendedAt: true,
+      fullName: true,
+      email: true,
+      avatar: true,
+    },
   });
   if (!user) {
     return { isSuspended: false };
   }
-  const entry = {
+  const entry: CachedAccountStatus = {
     isSuspended: user.isSuspended,
     suspendedReason: user.suspendedReason,
     suspendedAt: user.suspendedAt,
+    fullName: user.fullName,
+    email: user.email,
+    avatar: user.avatar,
     cachedAt: Date.now(),
   };
   statusCache.set(userId, entry);
@@ -72,6 +85,15 @@ export const authenticateToken = async (req: AuthenticatedRequest, res: Response
     // Contrôle réel côté serveur du statut du compte (suspension / blocage)
     const status = await checkUserSuspended(decoded.id);
     if (status.isSuspended) {
+      let supportToken: string | undefined;
+      try {
+        supportToken = jwt.sign(
+          { id: decoded.id, email: status.email || decoded.email, roles: [], isSuspended: true },
+          JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+      } catch (_) {}
+
       return sendError(
         res,
         status.suspendedReason || "Votre compte a été suspendu par l'administration.",
@@ -81,6 +103,11 @@ export const authenticateToken = async (req: AuthenticatedRequest, res: Response
           reason: status.suspendedReason || "Compte suspendu par l'administration",
           isPermanent: true,
           suspendedAt: status.suspendedAt ? status.suspendedAt.toISOString() : undefined,
+          userId: decoded.id,
+          email: status.email || decoded.email,
+          fullName: status.fullName,
+          avatar: status.avatar,
+          supportToken,
         }
       );
     }
