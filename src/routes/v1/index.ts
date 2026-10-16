@@ -105,7 +105,7 @@ const playLimiter = rateLimit({
 // Local development / mock storage uploads are saved to disk, including audio/video range playback.
 const isLocalMock = StorageFactory.getProvider() instanceof LocalMockStorageProvider;
 if (isLocalMock || process.env.NODE_ENV !== "production") {
-  router.put("/mock-storage/upload", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+  router.put("/mock-storage/upload", async (req, res) => {
     const storage = StorageFactory.getProvider();
     if (!(storage instanceof LocalMockStorageProvider)) { res.sendStatus(404); return; }
     try {

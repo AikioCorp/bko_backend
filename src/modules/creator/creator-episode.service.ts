@@ -115,6 +115,7 @@ export class CreatorEpisodeService {
       description: string;
       cover?: string;
       seasonId?: string;
+      seasonNumber?: number;
       episodeNumber?: number;
       languageCode?: string;
       topicIds?: string[];
@@ -127,7 +128,33 @@ export class CreatorEpisodeService {
     });
     if (!member || member.role === "ANALYST") throw new Error("FORBIDDEN");
 
-    let slugBase = slugify(data.title);
+    const title = String(data.title || "").trim();
+    const description = String(data.description || "").trim();
+    if (!title || !description) {
+      throw new Error("VALIDATION_ERROR_MISSING_FIELDS");
+    }
+
+    let resolvedSeasonId = data.seasonId;
+    const seasonNum =
+      data.seasonNumber !== undefined && data.seasonNumber !== null
+        ? Number(data.seasonNumber)
+        : NaN;
+    if (!resolvedSeasonId && Number.isInteger(seasonNum) && seasonNum > 0) {
+      const season = await prisma.season.upsert({
+        where: { podcastId_number: { podcastId, number: seasonNum } },
+        update: {},
+        create: { podcastId, number: seasonNum, title: `Saison ${seasonNum}` },
+      });
+      resolvedSeasonId = season.id;
+    }
+
+    const epNum =
+      data.episodeNumber !== undefined && data.episodeNumber !== null
+        ? Number(data.episodeNumber)
+        : NaN;
+    const resolvedEpisodeNumber = Number.isInteger(epNum) && epNum > 0 ? epNum : undefined;
+
+    let slugBase = slugify(title) || "episode";
     let slug = slugBase;
     let count = 1;
 
@@ -139,12 +166,12 @@ export class CreatorEpisodeService {
     const episode = await prisma.episode.create({
       data: {
         podcastId,
-        title: data.title,
+        title,
         slug,
-        description: data.description,
-        cover: data.cover,
-        seasonId: data.seasonId,
-        episodeNumber: data.episodeNumber,
+        description,
+        cover: data.cover || undefined,
+        seasonId: resolvedSeasonId,
+        episodeNumber: resolvedEpisodeNumber,
         languageCode: data.languageCode || "fr",
         // Toujours brouillon : la publication passe par publish/schedule (média prêt, validation, marché).
         status: EpisodeStatus.DRAFT,
@@ -192,18 +219,47 @@ export class CreatorEpisodeService {
     if (!member || member.role === "ANALYST") throw new Error("FORBIDDEN");
 
     const resolved = MediaResolverService.resolveUrl(data.rawUrl, data.mediaTypePreference);
+    const isPrimaryAudio = data.isPrimaryAudio ?? resolved.type === "AUDIO";
+    const isPrimaryVideo = data.isPrimaryVideo ?? resolved.type === "VIDEO";
 
     return prisma.$transaction(async (tx) => {
-      if (data.isPrimaryAudio) {
+      if (isPrimaryAudio) {
         await tx.mediaSource.updateMany({
           where: { episodeId, isPrimaryAudio: true },
           data: { isPrimaryAudio: false },
         });
       }
-      if (data.isPrimaryVideo) {
+      if (isPrimaryVideo) {
         await tx.mediaSource.updateMany({
           where: { episodeId, isPrimaryVideo: true },
           data: { isPrimaryVideo: false },
+        });
+      }
+
+      // Idempotence lors d'une nouvelle tentative : si une source externe du même type existe déjà sur un brouillon (ou avec la même URL), la mettre à jour sans dupliquer
+      const existing = await tx.mediaSource.findFirst({
+        where: {
+          episodeId,
+          sourceType: "EXTERNAL",
+          type: resolved.type,
+          ...(episode.status === EpisodeStatus.DRAFT ? {} : { externalUrl: resolved.externalUrl }),
+        },
+      });
+
+      if (existing) {
+        return tx.mediaSource.update({
+          where: { id: existing.id },
+          data: {
+            type: resolved.type,
+            sourceType: "EXTERNAL",
+            provider: resolved.provider,
+            playbackMode: resolved.playbackMode,
+            externalUrl: resolved.externalUrl,
+            embedUrl: resolved.embedUrl,
+            externalId: resolved.externalId,
+            isPrimaryAudio,
+            isPrimaryVideo,
+          },
         });
       }
 
@@ -217,8 +273,8 @@ export class CreatorEpisodeService {
           externalUrl: resolved.externalUrl,
           embedUrl: resolved.embedUrl,
           externalId: resolved.externalId,
-          isPrimaryAudio: data.isPrimaryAudio ?? resolved.type === "AUDIO",
-          isPrimaryVideo: data.isPrimaryVideo ?? resolved.type === "VIDEO",
+          isPrimaryAudio,
+          isPrimaryVideo,
         },
       });
     });

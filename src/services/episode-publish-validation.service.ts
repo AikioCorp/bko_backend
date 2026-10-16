@@ -95,26 +95,33 @@ export class EpisodePublishValidationService {
     const playableAudio = episode.mediaSources.find(
       (s) => s.type === "AUDIO" && (!s.mediaAsset || s.mediaAsset.status === "READY") && (s.externalUrl || s.mediaAssetId)
     );
-    const audioProcessing = episode.mediaSources.some(
-      (s) => s.type === "AUDIO" && s.mediaAsset && (s.mediaAsset.status === "PROCESSING" || s.mediaAsset.status === "UPLOADING")
+    const mediaProcessing = episode.mediaSources.some(
+      (s) => s.mediaAsset && (s.mediaAsset.status === "PROCESSING" || s.mediaAsset.status === "UPLOADING")
+    );
+    const mediaFailed = episode.mediaSources.some(
+      (s) => s.mediaAsset && s.mediaAsset.status === "FAILED"
     );
     const playableVideo = episode.mediaSources.find(
-      (s) => s.type === "VIDEO" && (!s.mediaAsset || s.mediaAsset.status === "READY") && s.status !== "EMBED_BLOCKED" && (s.externalUrl || s.externalId)
+      (s) => s.type === "VIDEO" && (!s.mediaAsset || s.mediaAsset.status === "READY") && s.status !== "EMBED_BLOCKED" && (s.externalUrl || s.externalId || s.mediaAssetId)
     );
 
-    const hasPlayableSource = Boolean(playableAudio || playableVideo);
+    const hasPlayableSource = Boolean(playableAudio || playableVideo) && !mediaFailed;
     issues.push({
       key: "media_source",
       label: "Au moins une source média disponible",
       ok: hasPlayableSource,
-      message: hasPlayableSource ? undefined : "Aucune source audio prête ou vidéo diffusable n'est associée.",
+      message: mediaFailed
+        ? "Le traitement d'un fichier média associé a échoué. Remplacez-le avant de publier."
+        : hasPlayableSource
+        ? undefined
+        : "Aucune source audio prête ou vidéo diffusable n'est associée.",
     });
 
     issues.push({
       key: "media_processing",
-      label: "Traitement audio terminé",
-      ok: !audioProcessing,
-      message: !audioProcessing ? undefined : "Le fichier audio est encore en cours d'optimisation.",
+      label: "Traitement média terminé",
+      ok: !mediaProcessing,
+      message: !mediaProcessing ? undefined : "Le fichier audio ou vidéo est encore en cours d'analyse ou d'optimisation.",
     });
 
     // 6. Droits de marché (optionnel, pour les créateurs)

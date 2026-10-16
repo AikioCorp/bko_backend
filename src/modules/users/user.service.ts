@@ -80,7 +80,13 @@ export class UserService {
   }
 
   static async updateMe(userId: string, data: { fullName?: string; avatar?: string; phoneNumber?: string | null; bio?: string }) {
-    const { bio, ...userData } = data as any;
+    const userData: { fullName?: string; avatar?: string | null; phoneNumber?: string | null } = {};
+    if (typeof data.fullName === "string" && data.fullName.trim()) {
+      userData.fullName = data.fullName.trim();
+    }
+    if (data.avatar === null || (typeof data.avatar === "string" && data.avatar.trim())) {
+      userData.avatar = data.avatar ? data.avatar.trim() : null;
+    }
 
     if ("phoneNumber" in data) {
       const raw = data.phoneNumber;
@@ -113,12 +119,12 @@ export class UserService {
       },
     });
 
-    if (typeof bio === "string") {
+    if (typeof data.bio === "string") {
       const creator = await prisma.creatorProfile.findUnique({ where: { userId } });
       if (creator) {
         await prisma.creatorProfile.update({
           where: { userId },
-          data: { bio: bio.trim() },
+          data: { bio: data.bio.trim() },
         });
       }
     }
@@ -381,7 +387,10 @@ export class UserService {
     if (buffer.length === 0) throw new Error("Fichier image vide");
     if (buffer.length > 10 * 1024 * 1024) throw new Error("L'image dépasse la limite de 10 Mo");
 
-    const mimeType = (data.mimeType || "image/jpeg").toLowerCase();
+    const mimeType = (data.mimeType || "image/jpeg").toLowerCase().trim();
+    if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(mimeType)) {
+      throw new Error("Format d'image non supporté (JPEG, PNG, WebP ou GIF uniquement).");
+    }
     const ext = mimeType.includes("png")
       ? "png"
       : mimeType.includes("webp")
@@ -399,21 +408,18 @@ export class UserService {
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, buffer);
     } else {
-      try {
-        const { PutObjectCommand } = await import("@aws-sdk/client-s3");
-        if ((storage as any).s3Client) {
-          await (storage as any).s3Client.send(
-            new PutObjectCommand({
-              Bucket: (storage as any).bucket,
-              Key: key,
-              Body: buffer,
-              ContentType: mimeType,
-            })
-          );
-        }
-      } catch (err) {
-        console.error("[uploadAvatar] R2 upload error:", err);
+      const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+      if (!(storage as any).s3Client) {
+        throw new Error("Stockage d'images indisponible.");
       }
+      await (storage as any).s3Client.send(
+        new PutObjectCommand({
+          Bucket: (storage as any).bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: mimeType,
+        })
+      );
     }
 
     const publicUrl = await storage.createPresignedDownloadUrl(key);

@@ -26,9 +26,9 @@ export class YouTubeResolverService {
       throw new Error("URL_OR_ID_REQUIRED: Veuillez saisir une URL de chaîne ou un identifiant YouTube.");
     }
 
-    // Détection d'URL de vidéo isolée
+    // Détection d'URL de vidéo isolée (watch, shorts, live, embed, youtu.be)
     if (
-      /^(https?:\/\/)?(www\.|m\.)?(youtube\.com\/(watch\?v=|shorts\/|live\/)|youtu\.be\/)/i.test(input)
+      /^(https?:\/\/)?(www\.|m\.|music\.)?(youtube(-nocookie)?\.com\/(watch(\?|\/|$)|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)/i.test(input)
     ) {
       throw new Error(
         "VIDEO_URL_NOT_CHANNEL: Ceci est l'adresse d'une vidéo YouTube, pas d'une chaîne. Veuillez entrer l'URL de la chaîne (ex: https://www.youtube.com/@nomDeChaine) ou son identifiant (UC...)."
@@ -49,11 +49,27 @@ export class YouTubeResolverService {
     try {
       const url = new URL(input.startsWith("http") ? input : `https://${input}`);
       const hostname = url.hostname.toLowerCase();
-      if (!["youtube.com","www.youtube.com","m.youtube.com","youtu.be","www.youtu.be"].includes(hostname)) {
+      if (!["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"].includes(hostname)) {
         throw new Error("NOT_YOUTUBE_URL: Cette adresse ne provient pas de YouTube.");
       }
 
       const pathname = url.pathname;
+
+      if (
+        hostname === "youtu.be" ||
+        hostname === "www.youtu.be" ||
+        pathname === "/watch" ||
+        pathname.startsWith("/watch/") ||
+        pathname.startsWith("/shorts/") ||
+        pathname.startsWith("/live/") ||
+        pathname.startsWith("/embed/") ||
+        pathname.startsWith("/v/") ||
+        url.searchParams.has("v")
+      ) {
+        throw new Error(
+          "VIDEO_URL_NOT_CHANNEL: Ceci est l'adresse d'une vidéo YouTube, pas d'une chaîne. Veuillez entrer l'URL de la chaîne (ex: https://www.youtube.com/@nomDeChaine) ou son identifiant (UC...)."
+        );
+      }
 
       // /channel/UC...
       const channelMatch = pathname.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/i);

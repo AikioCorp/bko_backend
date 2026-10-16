@@ -29,6 +29,9 @@ const MAP: Record<string, [number, string]> = {
 
 /** Réponse d'erreur du parcours créateur ; toute erreur inconnue reste une 500 (message masqué en production). */
 export function creatorError(res: Response, error: any) {
+  if (error?.code === "VALIDATION_FAILED") {
+    return sendError(res, error.message || "Validation de publication échouée.", "VALIDATION_FAILED", 400, error.issues);
+  }
   const known = MAP[error?.message];
   if (known) return sendError(res, known[1], error.message, known[0]);
   if (typeof error?.message === "string" && error.message.startsWith("FEATURE_DISABLED")) {

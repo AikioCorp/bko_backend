@@ -23,6 +23,7 @@ const EXT_BY_MIME: Record<string, string> = {
 };
 
 const ALLOWED_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_IMAGE_FOLDERS = new Set(["covers", "banners", "avatars"]);
 const IMAGE_EXT_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -44,11 +45,15 @@ export class UploadService {
       throw new Error("Format d'image non supporté (JPEG, PNG, WebP ou GIF uniquement).");
     }
 
-    if (params.sizeBytes && params.sizeBytes > 10 * 1024 * 1024) {
-      throw new Error("L'image dépasse la limite de 10 Mo.");
+    if (params.sizeBytes !== undefined && (Number(params.sizeBytes) <= 0 || Number(params.sizeBytes) > 10 * 1024 * 1024)) {
+      throw new Error("L'image dépasse la limite de 10 Mo ou est invalide.");
     }
 
-    const folder = params.folder || "covers";
+    const rawFolder = String(params.folder || "covers").trim();
+    if (!ALLOWED_IMAGE_FOLDERS.has(rawFolder)) {
+      throw new Error("Dossier de destination d'image invalide.");
+    }
+    const folder = rawFolder as "covers" | "banners" | "avatars";
     const ext = IMAGE_EXT_BY_MIME[mimeType] || "jpg";
     const key = `images/${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
@@ -111,14 +116,18 @@ export class UploadService {
     }
 
     // 1. Validation du MIME Type
-    const isAudio = mediaType === "AUDIO" && ALLOWED_AUDIO_MIMES.includes(mimeType);
-    const isVideo = mediaType === "VIDEO" && ALLOWED_VIDEO_MIMES.includes(mimeType);
+    const normalizedMime = String(mimeType || "").toLowerCase().trim();
+    const isAudio = mediaType === "AUDIO" && ALLOWED_AUDIO_MIMES.includes(normalizedMime);
+    const isVideo = mediaType === "VIDEO" && ALLOWED_VIDEO_MIMES.includes(normalizedMime);
 
     if (!isAudio && !isVideo) {
       throw new Error("INVALID_MEDIA_TYPE");
     }
 
     // 2. Validation des limites de taille
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+      throw new Error("INVALID_MEDIA_TYPE");
+    }
     if (mediaType === "AUDIO" && sizeBytes > MAX_AUDIO_BYTES) {
       throw new Error("FILE_TOO_LARGE_AUDIO");
     }

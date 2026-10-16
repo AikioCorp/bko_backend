@@ -5,6 +5,11 @@ import { MarketAccessService } from "../../services/market-access.service.js";
 
 export class RssImportService {
   static async previewFeed(userId: string, podcastId: string, feedUrl: string) {
+    const member = await prisma.podcastMember.findUnique({
+      where: { podcastId_userId: { podcastId, userId } },
+    });
+    if (!member) throw new Error("FORBIDDEN");
+
     const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });
     if (!podcast) throw new Error("PODCAST_NOT_FOUND");
 
@@ -14,12 +19,13 @@ export class RssImportService {
       throw new Error("MARKET_RSS_IMPORT_DISABLED");
     }
 
-    const { text } = await SsrfProtectionService.safeFetch(feedUrl);
+    const validatedUrl = await SsrfProtectionService.validateUrl(feedUrl);
+    const { text } = await SsrfProtectionService.safeFetch(validatedUrl);
     const parsed = RssParserService.parseXml(text);
 
     return {
       podcastId,
-      feedUrl,
+      feedUrl: validatedUrl,
       title: parsed.title,
       description: parsed.description,
       image: parsed.image,
@@ -27,6 +33,7 @@ export class RssImportService {
       language: parsed.language,
       website: parsed.website,
       episodeCount: parsed.items.length,
+      itemCount: parsed.items.length,
       sampleEpisodes: parsed.items.slice(0, 5),
     };
   }
@@ -46,17 +53,19 @@ export class RssImportService {
     const canImport = await MarketAccessService.canImportRss(podcast.countryId, creatorProfile?.id);
     if (!canImport) throw new Error("MARKET_RSS_IMPORT_DISABLED");
 
+    const validatedUrl = await SsrfProtectionService.validateUrl(feedUrl);
+
     // Créer ou mettre à jour le flux RssFeed
     const rssFeed = await prisma.rssFeed.upsert({
       where: { podcastId },
       update: {
-        url: feedUrl,
+        url: validatedUrl,
         syncStatus: "IDLE",
         errorMessage: null,
       },
       create: {
         podcastId,
-        url: feedUrl,
+        url: validatedUrl,
         syncStatus: "IDLE",
       },
     });
@@ -69,7 +78,7 @@ export class RssImportService {
         payload: {
           rssFeedId: rssFeed.id,
           podcastId,
-          feedUrl,
+          feedUrl: validatedUrl,
         },
       },
     });
@@ -77,7 +86,7 @@ export class RssImportService {
     return {
       rssFeedId: rssFeed.id,
       syncStatus: "RUNNING",
-      message: "Flux RSS connecté. Importation asynchrone des épisodes en cours.",
+      message: "Flux RSS connecté. Importation placée en file d'attente.",
     };
   }
 
@@ -116,6 +125,11 @@ export class RssImportService {
   }
 
   static async getFeedStatus(userId: string, podcastId: string) {
+    const member = await prisma.podcastMember.findUnique({
+      where: { podcastId_userId: { podcastId, userId } },
+    });
+    if (!member) throw new Error("FORBIDDEN");
+
     const rssFeed = await prisma.rssFeed.findUnique({
       where: { podcastId },
       include: {

@@ -10,6 +10,7 @@ export class MediaWorkerService {
         where: {
           status: "PENDING",
           queueName: "media-processing",
+          jobType: "MEDIA_ANALYZE",
           runAt: { lte: new Date() },
         },
         orderBy: { runAt: "asc" },
@@ -105,20 +106,34 @@ export class MediaWorkerService {
 
       // Idempotence : un rejeu du job (après échec partiel) ne duplique pas la source.
       const already = await prisma.mediaSource.findFirst({ where: { episodeId: payload.episodeId, mediaAssetId: asset.id } });
-      if (!already) await prisma.mediaSource.create({
-        data: {
-          episodeId: payload.episodeId,
-          type: payload.mediaType,
-          sourceType: "UPLOAD",
-          playbackMode: "NATIVE",
-          mediaAssetId: asset.id,
-          externalUrl: publicUrl,
-          durationSeconds: durationSeconds ?? undefined,
-          mimeType: asset.mimeType,
-          isPrimaryAudio: isAudio,
-          isPrimaryVideo: isVideo,
-        },
-      });
+      if (!already) {
+        if (isAudio) {
+          await prisma.mediaSource.updateMany({
+            where: { episodeId: payload.episodeId, isPrimaryAudio: true },
+            data: { isPrimaryAudio: false },
+          });
+        }
+        if (isVideo) {
+          await prisma.mediaSource.updateMany({
+            where: { episodeId: payload.episodeId, isPrimaryVideo: true },
+            data: { isPrimaryVideo: false },
+          });
+        }
+        await prisma.mediaSource.create({
+          data: {
+            episodeId: payload.episodeId,
+            type: payload.mediaType,
+            sourceType: "UPLOAD",
+            playbackMode: "NATIVE",
+            mediaAssetId: asset.id,
+            externalUrl: publicUrl,
+            durationSeconds: durationSeconds ?? undefined,
+            mimeType: asset.mimeType,
+            isPrimaryAudio: isAudio,
+            isPrimaryVideo: isVideo,
+          },
+        });
+      }
 
       // Mettre à jour la durée de l'épisode (seulement si elle est réellement connue)
       if (durationSeconds) {

@@ -64,6 +64,7 @@ export class CreatorManageService {
       description?: string;
       cover?: string | null;
       seasonId?: string | null;
+      seasonNumber?: number | null;
       episodeNumber?: number | null;
       languageCode?: string;
       topicIds?: string[];
@@ -78,7 +79,23 @@ export class CreatorManageService {
       if (!season || season.podcastId !== episode.podcastId) throw new Error("SEASON_NOT_FOUND");
     }
 
-    const { topicIds, people, ...scalar } = data;
+    const { topicIds, people, seasonNumber, ...scalar } = data;
+    if (seasonNumber !== undefined && scalar.seasonId === undefined) {
+      if (seasonNumber === null) {
+        scalar.seasonId = null;
+      } else {
+        const sNum = Number(seasonNumber);
+        if (Number.isInteger(sNum) && sNum > 0) {
+          const season = await prisma.season.upsert({
+            where: { podcastId_number: { podcastId: episode.podcastId, number: sNum } },
+            update: {},
+            create: { podcastId: episode.podcastId, number: sNum, title: `Saison ${sNum}` },
+          });
+          scalar.seasonId = season.id;
+        }
+      }
+    }
+
     return prisma.$transaction(async (tx) => {
       if (topicIds) {
         await tx.episodeTopic.deleteMany({ where: { episodeId } });
