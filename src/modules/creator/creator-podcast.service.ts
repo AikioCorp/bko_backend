@@ -1,5 +1,5 @@
 import { prisma } from "../../config/prisma.js";
-import { slugify } from "./creator-profile.service.js";
+import { slugify, CreatorProfileService } from "./creator-profile.service.js";
 import { MarketService } from "../markets/market.service.js";
 import { PodcastMemberRole, PodcastStatus } from "@prisma/client";
 import { ContentReviewService } from "../../services/content-review.service.js";
@@ -64,10 +64,16 @@ export class CreatorPodcastService {
       status?: PodcastStatus;
     }
   ) {
-    const creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId } });
-    if (!creatorProfile) throw new Error("CREATOR_PROFILE_REQUIRED");
-    const countryCode = data.countryId || creatorProfile.countryId;
-    if (!countryCode) throw new Error("CREATOR_COUNTRY_REQUIRED");
+    let creatorProfile = await prisma.creatorProfile.findUnique({ where: { userId } });
+    if (!creatorProfile) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) throw new Error("USER_NOT_FOUND");
+      creatorProfile = await CreatorProfileService.createProfile(userId, {
+        displayName: user.fullName || "Créateur",
+        countryId: data.countryId || "ML",
+      });
+    }
+    const countryCode = data.countryId || creatorProfile.countryId || "ML";
 
     // Validation Marché : Vérifier que la création de podcast est autorisée dans ce pays
     const isAllowed = await MarketService.checkCapability(

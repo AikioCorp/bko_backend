@@ -4,6 +4,7 @@ import { CreatorProfileService } from "../src/modules/creator/creator-profile.se
 import { UserService } from "../src/modules/users/user.service.js";
 import { RssParserService } from "../src/modules/rss/rss-parser.service.js";
 import { PushNotificationService } from "../src/services/push-notification.service.js";
+import { CreatorPodcastService } from "../src/modules/creator/creator-podcast.service.js";
 
 interface TestReport {
   name: string;
@@ -155,9 +156,8 @@ async function runStudioVerification() {
     const pushJob = await prisma.jobQueueItem.findFirst({
       where: {
         queueName: "push_notifications",
-        status: { in: ["PENDING", "PROCESSING", "COMPLETED"] },
       },
-      orderBy: { id: "desc" },
+      orderBy: { createdAt: "desc" },
     });
 
     const isJobForUser =
@@ -331,7 +331,56 @@ async function runStudioVerification() {
       recordTest("Analyse de flux RSS autonome", false, undefined, e.message);
     }
 
-    // 10. TEST: Push Infrastructure Diagnostics
+    // 10. TEST: Création d'émission sans profil créateur préalable (auto-activation)
+    let freshCreatedPodcast: any = null;
+    let freshUser: any = null;
+    try {
+      const freshEmail = `fresh_creator_${Date.now()}@bamakopodcast.ml`;
+      freshUser = await prisma.user.create({
+        data: {
+          email: freshEmail,
+          fullName: "Nouveau Créateur Sans Profil",
+          passwordHash: "dummy_hash",
+        },
+      });
+
+      // User has 0 podcasts and NO CreatorProfile row
+      freshCreatedPodcast = await CreatorPodcastService.createPodcast(freshUser.id, {
+        name: `Podcast Auto Activé ${Date.now()}`,
+        description: "Podcast créé directement depuis l'analyse YouTube/RSS sans émission préalable",
+        cover: "https://bamakopodcast.ml/covers/auto.jpg",
+        countryId: "ML",
+        primaryLanguageCode: "fr",
+      });
+
+      const member = await prisma.podcastMember.findUnique({
+        where: { podcastId_userId: { podcastId: freshCreatedPodcast.id, userId: freshUser.id } },
+      });
+
+      const createdProfile = await prisma.creatorProfile.findUnique({
+        where: { userId: freshUser.id },
+      });
+
+      recordTest(
+        "Création d'émission directe sans profil préalable (auto-activation)",
+        Boolean(freshCreatedPodcast?.id && member?.role === "OWNER" && createdProfile?.id),
+        `Podcast: ${freshCreatedPodcast?.id}, Profil créateur créé: ${createdProfile?.id}, Rôle: ${member?.role}`
+      );
+    } catch (e: any) {
+      recordTest("Création d'émission directe sans profil préalable", false, undefined, e.message);
+    } finally {
+      if (freshCreatedPodcast?.id) {
+        await prisma.podcastMember.deleteMany({ where: { podcastId: freshCreatedPodcast.id } }).catch(() => {});
+        await prisma.podcast.delete({ where: { id: freshCreatedPodcast.id } }).catch(() => {});
+      }
+      if (freshUser?.id) {
+        await prisma.creatorProfile.deleteMany({ where: { userId: freshUser.id } }).catch(() => {});
+        await prisma.userRole.deleteMany({ where: { userId: freshUser.id } }).catch(() => {});
+        await prisma.user.delete({ where: { id: freshUser.id } }).catch(() => {});
+      }
+    }
+
+    // 11. TEST: Push Infrastructure Diagnostics
     const pushDiag = await PushNotificationService.getDiagnostics();
     recordTest(
       "Diagnostic de l'infrastructure Push (Firebase FCM, Outbox queue)",
