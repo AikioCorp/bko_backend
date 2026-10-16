@@ -7,10 +7,11 @@ export class RssController {
   static async previewFeed(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
-      const { feedUrl } = req.body;
-      if (!feedUrl) return sendError(res, "Lien du flux RSS requis", "VALIDATION_ERROR", 400);
+      const targetUrl = req.body.feedUrl || req.body.url;
+      if (!targetUrl) return sendError(res, "Lien du flux RSS requis", "VALIDATION_ERROR", 400);
 
-      const preview = await RssImportService.previewFeed(req.user.id, req.params.podcastId, feedUrl);
+      const podcastId = req.params.podcastId || req.body.podcastId || undefined;
+      const preview = await RssImportService.previewFeed(req.user.id, targetUrl, podcastId);
       return sendSuccess(res, preview);
     } catch (error: any) {
       if (error.message === "MARKET_RSS_IMPORT_DISABLED") {
@@ -26,9 +27,23 @@ export class RssController {
   static async connectFeed(req: AuthenticatedRequest, res: Response) {
     try {
       if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
-      const { feedUrl } = req.body;
-      const result = await RssImportService.connectFeed(req.user.id, req.params.podcastId, feedUrl);
+      const { feedUrl, autoSync, importSettings, sourceAuthor } = req.body;
+      const result = await RssImportService.connectFeed(req.user.id, req.params.podcastId, feedUrl, {
+        autoSync: autoSync !== false,
+        importSettings,
+        sourceAuthor,
+      });
       return sendSuccess(res, result, null, 201);
+    } catch (error: any) {
+      return sendError(res, error.message);
+    }
+  }
+
+  static async togglePauseFeed(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const result = await RssImportService.togglePauseFeed(req.user.id, req.params.podcastId);
+      return sendSuccess(res, result);
     } catch (error: any) {
       return sendError(res, error.message);
     }

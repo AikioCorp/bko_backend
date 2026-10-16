@@ -5,10 +5,150 @@ import { PodcastMemberRole } from "@prisma/client";
 import { MailService } from "../../services/mail/mail.service.js";
 import { Emails } from "../../services/mail/email-templates.js";
 import { NotificationService } from "../../services/notification.service.js";
+import { AuditService } from "../../services/audit.service.js";
 
 const ROLE_LABELS: Record<string, string> = { OWNER: "propriétaire", ADMIN: "administrateur", EDITOR: "éditeur", ANALYST: "analyste" };
 
 export class PodcastTeamService {
+  /** Recherche d'utilisateurs existants pour ajout direct à une équipe */
+  static async searchUsers(query: string) {
+    const q = (query || "").trim();
+    if (q.length < 2) return [];
+    return prisma.user.findMany({
+      where: {
+        isSuspended: false,
+        OR: [
+          { fullName: { contains: q, mode: "insensitive" } },
+          { email: { contains: q, mode: "insensitive" } },
+          { phoneNumber: { contains: q } },
+        ],
+      },
+      take: 10,
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        avatar: true,
+        phoneNumber: true,
+      },
+      orderBy: { fullName: "asc" },
+    });
+  }
+
+  /**
+   * Ajout direct d'un utilisateur existant à l'équipe d'un podcast (RÈGLE MÉTIER PRIORITAIRE).
+   * L'appartenance et les droits deviennent actifs immédiatement. Aucune acceptation ni jeton n'est requis.
+   */
+  static async directAddMember(
+    actorUserId: string,
+    podcastId: string,
+    input: { userId?: string; email?: string; role: PodcastMemberRole },
+    isStaffAdmin: boolean = false,
+    ip?: string
+  ) {
+    // 1. Contrôle des droits de l'acteur
+    if (!isStaffAdmin) {
+      const mine = await this.myRole(actorUserId, podcastId);
+      if (mine !== "OWNER") throw new Error("FORBIDDEN");
+    }
+
+    // 2. Validation du rôle
+    const validRoles: PodcastMemberRole[] = ["OWNER", "ADMIN", "EDITOR", "ANALYST"];
+    if (!validRoles.includes(input.role)) {
+      throw new Error("FORBIDDEN");
+    }
+
+    // 3. Résolution de l'utilisateur cible (par id ou par email)
+    let targetUser = null;
+    if (input.userId) {
+      targetUser = await prisma.user.findUnique({
+        where: { id: input.userId },
+        select: { id: true, fullName: true, email: true, avatar: true, isSuspended: true },
+      });
+    } else if (input.email) {
+      const normalizedEmail = input.email.trim().toLowerCase();
+      targetUser = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, fullName: true, email: true, avatar: true, isSuspended: true },
+      });
+    }
+
+    if (!targetUser) {
+      throw new Error("USER_NOT_FOUND");
+    }
+    if (targetUser.isSuspended) {
+      throw new Error("USER_SUSPENDED");
+    }
+
+    // 4. Vérification de l'état existant (idempotence stricte et protection contre réécriture silencieuse)
+    const existing = await prisma.podcastMember.findUnique({
+      where: { podcastId_userId: { podcastId, userId: targetUser.id } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatar: true } },
+      },
+    });
+
+    if (existing) {
+      if (existing.role === input.role) {
+        return {
+          success: true,
+          alreadyMember: true,
+          member: existing,
+          message: `${targetUser.fullName} fait déjà partie de l'équipe avec le rôle ${ROLE_LABELS[existing.role]}.`,
+        };
+      }
+      throw new Error("MEMBER_ALREADY_EXISTS_WITH_ROLE");
+    }
+
+    // 5. Création effective et immédiate de l'appartenance
+    const newMember = await prisma.podcastMember.create({
+      data: {
+        podcastId,
+        userId: targetUser.id,
+        role: input.role,
+      },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatar: true } },
+        podcast: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    // 6. Journalisation d'audit
+    await AuditService.logAction({
+      actorId: actorUserId,
+      action: "PODCAST_MEMBER_DIRECT_ADDED",
+      entityType: "Podcast",
+      entityId: podcastId,
+      newState: {
+        targetUserId: targetUser.id,
+        targetEmail: targetUser.email,
+        role: input.role,
+        addedByStaff: isStaffAdmin,
+      },
+      ipAddress: ip,
+    });
+
+    // 7. Notification de bout en bout (in-app, push et email avec bouton « Ouvrir l’émission »)
+    await NotificationService.notify(
+      [targetUser.id],
+      {
+        type: "TEAM_MEMBER_ADDED",
+        title: `Vous avez été ajouté à l'équipe : ${newMember.podcast.name}`,
+        body: `Vous êtes maintenant ${ROLE_LABELS[input.role]} de ce podcast. Votre accès au Studio est immédiatement actif.`,
+        link: `/studio/podcasts/${podcastId}`,
+        actionLabel: "Ouvrir l’émission",
+      },
+      { email: true }
+    );
+
+    return {
+      success: true,
+      alreadyMember: false,
+      member: newMember,
+      message: `${targetUser.fullName} a été ajouté(e) directement à l'équipe en tant que ${ROLE_LABELS[input.role]}.`,
+    };
+  }
+
   static async getMembers(userId: string, podcastId: string) {
     const member = await prisma.podcastMember.findUnique({
       where: { podcastId_userId: { podcastId, userId } },

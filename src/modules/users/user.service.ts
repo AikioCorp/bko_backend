@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import { prisma } from "../../config/prisma.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
 import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
+import { CreatorProfileService } from "../creator/creator-profile.service.js";
 
 export class UserService {
   static async getMe(userId: string) {
@@ -68,6 +69,8 @@ export class UserService {
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
 
+    const studioAccess = await CreatorProfileService.getStudioAccess(userId);
+
     return {
       ...cleanUser,
       hasPassword: Boolean(passwordHash),
@@ -76,6 +79,9 @@ export class UserService {
       hasPreferences,
       onboardingCompleted,
       onboardingState,
+      hasStudioAccess: studioAccess.canAccess,
+      isCollaborator: studioAccess.isCollaborator,
+      canCreatePodcast: studioAccess.canCreatePodcast,
     };
   }
 

@@ -7,6 +7,7 @@ import { prisma } from "../../config/prisma.js";
 import { authenticateToken, AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
+import { PushNotificationService } from "../../services/push-notification.service.js";
 
 import { JWT_SECRET } from "../../config/jwt.js";
 const accessKey = (id:string) => createHmac("sha256", JWT_SECRET).update(`support:${id}`).digest("hex");
@@ -37,7 +38,31 @@ async function notify(tx: any, ticket: any, event: string, key?: string) {
   const staff = [...new Set<string>(roles.filter((r:any)=>!r.user.isSuspended).map((r:any)=>r.user.id))];
   const notifications = staff.map(userId=>({userId,type:"SUPPORT_STAFF",title:event,body:ticket.subject,link:`/admin/support?ticket=${encodeURIComponent(ticket.id)}`}));
   if(ticket.userId && !staff.includes(ticket.userId)) notifications.push({userId:ticket.userId,type:"SUPPORT_USER",title:event,body:ticket.subject,link:`/support?ticket=${encodeURIComponent(ticket.id)}`});
-  if(notifications.length) await tx.notification.createMany({data:notifications});
+  if(notifications.length) {
+    await tx.notification.createMany({data:notifications});
+    for (const notif of notifications) {
+      await tx.jobQueueItem.create({
+        data: {
+          queueName: "push_notifications",
+          jobType: "SEND_PUSH",
+          payload: {
+            userIds: [notif.userId],
+            title: `[Support] ${event}`,
+            body: ticket.subject,
+            route: notif.link,
+            type: notif.type,
+          },
+          maxAttempts: 3,
+        },
+      });
+      void PushNotificationService.sendToUsers([notif.userId], {
+        title: `[Support] ${event}`,
+        body: ticket.subject,
+        route: notif.link,
+        data: { type: notif.type },
+      });
+    }
+  }
   const base = (process.env.APP_URL || "https://www.bamakopodcast.studio").replace(/\/$/,"");
   key = key || accessKey(ticket.id);
   const userLink = `${base}/support?ticket=${encodeURIComponent(ticket.id)}${key?`#key=${key}`:""}`;

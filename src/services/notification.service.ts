@@ -11,6 +11,8 @@ export interface NotificationInput {
   body?: string;
   /** Chemin interne du site (commence par "/"). Jamais de secret ni de jeton dans un lien. */
   link?: string;
+  /** Libellé du bouton d'action (ex: « Ouvrir l’émission ») */
+  actionLabel?: string;
 }
 
 const safeLink = (l?: string) => (l && l.startsWith("/") && !l.startsWith("//") ? l : undefined);
@@ -26,20 +28,63 @@ export class NotificationService {
     if (ids.length === 0) return;
     try {
       const link = safeLink(n.link);
+      const actionLabel = n.actionLabel || (link?.includes("/studio/podcasts/") ? "Ouvrir l’émission" : undefined);
+
       await prisma.notification.createMany({
         data: ids.map((userId) => ({ userId, type: n.type, title: n.title, body: n.body, link })),
       });
 
-      // Envoi Push Notification (FCM / APNs)
+      // 1. File persistante Outbox pour livraison push résiliente (reprise après reboot, déduplication, retries)
+      await prisma.jobQueueItem
+        .create({
+          data: {
+            queueName: "push_notifications",
+            jobType: "SEND_PUSH",
+            payload: {
+              userIds: ids,
+              title: n.title,
+              body: n.body || "",
+              route: link,
+              type: n.type,
+              actionLabel,
+            },
+            maxAttempts: 3,
+          },
+        })
+        .catch((err: any) => console.error("[notification:outbox] échec mise en file push :", err.message));
+
+      // 2. Envoi Push direct immédiat (FCM / APNs) pour réactivité instantanée
       void PushNotificationService.sendToUsers(ids, {
         title: n.title,
         body: n.body || "",
         route: link,
+        data: {
+          type: n.type,
+          actionLabel: actionLabel || "Ouvrir",
+        },
       });
 
+      // 3. Email optionnel avec template adapté
       if (opts.email) {
-        const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { email: true } });
-        await Promise.all(users.map((u) => MailService.enqueue(Emails.notification(u.email, { title: n.title, body: n.body, link }))));
+        const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true, fullName: true } });
+        const podcastIdMatch = link?.match(/\/studio\/podcasts\/([a-zA-Z0-9_-]+)/);
+        const podcastId = podcastIdMatch ? podcastIdMatch[1] : undefined;
+
+        await Promise.all(
+          users.map((u) => {
+            if (n.type === "TEAM_MEMBER_ADDED" && podcastId) {
+              const podcastName = n.title.replace(/^Vous avez été ajouté à l'équipe (?:de )?:?\s*/i, "").trim() || "l'émission";
+              return MailService.enqueue(
+                Emails.teamMemberAdded(u.email, {
+                  podcastName,
+                  roleLabel: n.body?.includes("propriétaire") ? "propriétaire" : n.body?.includes("administrateur") ? "administrateur" : n.body?.includes("analyste") ? "analyste" : "éditeur",
+                  podcastId,
+                })
+              );
+            }
+            return MailService.enqueue(Emails.notification(u.email, { title: n.title, body: n.body, link }));
+          })
+        );
       }
     } catch (e: any) {
       console.error("[notification] échec :", e.message);

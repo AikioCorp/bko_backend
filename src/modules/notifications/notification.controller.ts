@@ -273,5 +273,16 @@ export class NotificationController {
       return fail(res, e);
     }
   }
+
+  static async getDiagnostics(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { PushNotificationService } = await import("../../services/push-notification.service.js");
+      const diag = await PushNotificationService.getDiagnostics();
+      return sendSuccess(res, diag);
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
 }
+
 

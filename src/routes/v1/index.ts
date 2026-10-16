@@ -315,6 +315,7 @@ router.post("/admin/podcasts/:podcastId/youtube/sync", authenticateToken, requir
 router.patch("/admin/podcasts/:podcastId/youtube/settings", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.updateSettings);
 router.delete("/admin/podcasts/:podcastId/youtube", authenticateToken, requirePermission("catalog.delete"), AdminYouTubeController.disconnectChannel);
 router.post("/admin/podcasts/:podcastId/youtube/historical-import", authenticateToken, requirePermission("catalog.edit"), AdminYouTubeController.historicalImport);
+router.get("/admin/notifications/diagnostics", authenticateToken, requirePermission("catalog.view"), NotificationController.getDiagnostics);
 
 // --- ADMIN CATEGORIES & LANGUAGES ---
 router.get("/admin/categories", authenticateToken, requirePermission("catalog.view"), AdminClassificationController.listCategories);
@@ -353,6 +354,11 @@ router.post("/admin/creators", authenticateToken, requirePermission("users.edit"
 router.patch("/admin/creators/:id", authenticateToken, requirePermission("users.edit"), AdminConsoleController.updateCreator);
 router.delete("/admin/creators/:id", authenticateToken, requirePermission("users.delete"), AdminConsoleController.deleteCreatorProfile);
 router.post("/admin/creators/:id/assign-podcast", authenticateToken, requirePermission("users.edit"), AdminConsoleController.assignPodcastToCreator);
+router.get("/admin/podcasts/:id/members", authenticateToken, requirePermission("catalog.view"), AdminConsoleController.getPodcastMembers);
+router.post("/admin/podcasts/:id/members", authenticateToken, requirePermission("catalog.edit"), AdminConsoleController.addPodcastMember);
+router.patch("/admin/podcasts/:id/members/:userId", authenticateToken, requirePermission("catalog.edit"), AdminConsoleController.updatePodcastMemberRole);
+router.delete("/admin/podcasts/:id/members/:userId", authenticateToken, requirePermission("catalog.edit"), AdminConsoleController.removePodcastMember);
+router.get("/admin/users/search", authenticateToken, requirePermission("users.view"), AdminConsoleController.searchUsers);
 router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
 router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);
 router.get("/admin/roles", authenticateToken, requirePermission("roles.view"), AdminConsoleController.listRoles);
@@ -403,8 +409,10 @@ router.post("/creator/uploads/:id/complete", authenticateToken, UploadController
 router.get("/creator/uploads/:id", authenticateToken, UploadController.getUploadSessionStatus);
 
 // --- SYNCHRONISATION & IMPORT FLUX RSS ---
+router.post("/creator/rss/preview", authenticateToken, RssController.previewFeed);
 router.post("/creator/podcasts/:podcastId/rss/preview", authenticateToken, RssController.previewFeed);
 router.post("/creator/podcasts/:podcastId/rss/connect", authenticateToken, RssController.connectFeed);
+router.post("/creator/podcasts/:podcastId/rss/pause", authenticateToken, RssController.togglePauseFeed);
 router.post("/creator/podcasts/:podcastId/rss/sync", authenticateToken, RssController.syncFeedNow);
 router.delete("/creator/podcasts/:podcastId/rss", authenticateToken, RssController.disconnectFeed);
 router.get("/creator/podcasts/:podcastId/rss", authenticateToken, RssController.getFeedStatus);
@@ -465,6 +473,8 @@ router.get("/creator/podcasts/:podcastId/analytics", authenticateToken, CreatorM
 router.post("/episodes/:id/plays", playLimiter, optionalAuthenticateToken, CreatorManageController.recordPlay);
 
 // --- ÉQUIPE & INVITATIONS ---
+router.post("/creator/podcasts/:podcastId/members", authenticateToken, CreatorManageController.directAddMember);
+router.get("/creator/users/search", authenticateToken, CreatorManageController.searchUsers);
 router.patch("/creator/podcasts/:podcastId/members/:userId", authenticateToken, CreatorManageController.updateMember);
 router.delete("/creator/podcasts/:podcastId/members/:userId", authenticateToken, CreatorManageController.removeMember);
 router.get("/creator/podcasts/:podcastId/invitations", authenticateToken, CreatorManageController.listInvitations);

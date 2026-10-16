@@ -2,6 +2,7 @@ import { Response } from "express";
 import { z } from "zod";
 import { AdminConsoleService } from "./admin-console.service.js";
 import { AdminRbacService } from "./admin-rbac.service.js";
+import { PodcastTeamService } from "../creator/podcast-team.service.js";
 import { PermissionService } from "../../services/permission.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
@@ -362,13 +363,71 @@ export class AdminConsoleController {
       const b = z
         .object({
           podcastId: z.string().min(1),
-          role: z.enum(["OWNER", "EDITOR"]).default("OWNER"),
+          role: z.enum(["OWNER", "ADMIN", "EDITOR", "ANALYST"]).default("OWNER"),
         })
         .parse(req.body);
       return sendSuccess(
         res,
-        await AdminConsoleService.assignPodcastToCreator(actor(req).id, idParam(req), b.podcastId, b.role, req.ip)
+        await AdminConsoleService.assignPodcastToCreator(actor(req).id, idParam(req), b.podcastId, b.role as any, req.ip)
       );
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async getPodcastMembers(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(res, await AdminConsoleService.getPodcastMembers(idParam(req)));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async addPodcastMember(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          userId: z.string().min(1).optional(),
+          email: z.string().email().optional(),
+          role: z.enum(["OWNER", "ADMIN", "EDITOR", "ANALYST"]).default("EDITOR"),
+        })
+        .refine((d) => d.userId || d.email, { message: "userId ou email requis" })
+        .parse(req.body);
+
+      const result = await AdminConsoleService.addPodcastMember(actor(req).id, idParam(req), b as any, req.ip);
+      return sendSuccess(res, result, null, 201);
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async updatePodcastMemberRole(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z.object({ role: z.enum(["OWNER", "ADMIN", "EDITOR", "ANALYST"]) }).parse(req.body);
+      return sendSuccess(
+        res,
+        await AdminConsoleService.updatePodcastMemberRole(actor(req).id, idParam(req), req.params.userId, b.role as any, req.ip)
+      );
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async removePodcastMember(req: AuthenticatedRequest, res: Response) {
+    try {
+      return sendSuccess(
+        res,
+        await AdminConsoleService.removePodcastMember(actor(req).id, idParam(req), req.params.userId, req.ip)
+      );
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async searchUsers(req: AuthenticatedRequest, res: Response) {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      return sendSuccess(res, await PodcastTeamService.searchUsers(q));
     } catch (e) {
       return fail(res, e);
     }

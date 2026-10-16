@@ -1,8 +1,9 @@
-import { Prisma, ReportStatus, ReportTargetType, ReportReason, SubscriptionStatus, SubscriptionScope } from "@prisma/client";
+import { Prisma, ReportStatus, ReportTargetType, ReportReason, SubscriptionStatus, SubscriptionScope, PodcastMemberRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AuditService } from "../../services/audit.service.js";
 import { FeatureFlags } from "../../config/feature-flags.js";
 import { NotificationService } from "../../services/notification.service.js";
+import { PodcastTeamService } from "../creator/podcast-team.service.js";
 
 export class AdminConsoleService {
   // ───────────────────────── VALIDATION ÉDITORIALE ─────────────────────────
@@ -640,31 +641,108 @@ export class AdminConsoleService {
     actorId: string,
     profileId: string,
     podcastId: string,
-    role: "OWNER" | "EDITOR" = "OWNER",
+    role: PodcastMemberRole = "OWNER",
     ip?: string
   ) {
     const profile = await prisma.creatorProfile.findUnique({ where: { id: profileId } });
     if (!profile) throw new Error("NOT_FOUND");
 
+    return this.addPodcastMember(actorId, podcastId, { userId: profile.userId, role }, ip);
+  }
+
+  static async getPodcastMembers(podcastId: string) {
     const podcast = await prisma.podcast.findUnique({ where: { id: podcastId } });
     if (!podcast) throw new Error("NOT_FOUND");
 
-    await prisma.podcastMember.upsert({
-      where: { podcastId_userId: { podcastId, userId: profile.userId } },
-      create: { podcastId, userId: profile.userId, role },
-      update: { role },
+    return prisma.podcastMember.findMany({
+      where: { podcastId },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatar: true, phoneNumber: true } },
+      },
+      orderBy: { id: "asc" },
+    });
+  }
+
+  static async addPodcastMember(
+    actorId: string,
+    podcastId: string,
+    input: { userId?: string; email?: string; role: PodcastMemberRole },
+    ip?: string
+  ) {
+    return PodcastTeamService.directAddMember(actorId, podcastId, input, true, ip);
+  }
+
+  static async updatePodcastMemberRole(
+    actorId: string,
+    podcastId: string,
+    targetUserId: string,
+    role: PodcastMemberRole,
+    ip?: string
+  ) {
+    const target = await prisma.podcastMember.findUnique({ where: { podcastId_userId: { podcastId, userId: targetUserId } } });
+    if (!target) throw new Error("NOT_FOUND");
+
+    if (target.role === "OWNER" && role !== "OWNER") {
+      const owners = await prisma.podcastMember.count({ where: { podcastId, role: "OWNER" } });
+      if (owners <= 1) throw new Error("CANNOT_REMOVE_OWNER");
+    }
+
+    const updated = await prisma.podcastMember.update({
+      where: { podcastId_userId: { podcastId, userId: targetUserId } },
+      data: { role },
+      include: { user: { select: { id: true, fullName: true, email: true, avatar: true } }, podcast: { select: { id: true, name: true } } },
     });
 
     await AuditService.logAction({
       actorId,
-      action: "PODCAST_ASSIGNED_TO_CREATOR",
+      action: "PODCAST_MEMBER_ROLE_UPDATED",
       entityType: "Podcast",
       entityId: podcastId,
-      newState: { creatorProfileId: profile.id, userId: profile.userId, role },
+      newState: { targetUserId, previousRole: target.role, role },
       ipAddress: ip,
     });
 
-    return { success: true, podcastId, userId: profile.userId, role };
+    const roleLabels: Record<string, string> = { OWNER: "propriétaire", ADMIN: "administrateur", EDITOR: "éditeur", ANALYST: "analyste" };
+    await NotificationService.notify([targetUserId], {
+      type: "TEAM_ROLE_CHANGED",
+      title: `Votre rôle a changé : ${updated.podcast.name}`,
+      body: `Vous êtes maintenant ${roleLabels[role] || role} de ce podcast.`,
+      link: `/studio/podcasts/${podcastId}`,
+      actionLabel: "Ouvrir l’émission",
+    }, { email: true });
+
+    return updated;
+  }
+
+  static async removePodcastMember(actorId: string, podcastId: string, targetUserId: string, ip?: string) {
+    const target = await prisma.podcastMember.findUnique({ where: { podcastId_userId: { podcastId, userId: targetUserId } } });
+    if (!target) throw new Error("NOT_FOUND");
+
+    if (target.role === "OWNER") {
+      const owners = await prisma.podcastMember.count({ where: { podcastId, role: "OWNER" } });
+      if (owners <= 1) throw new Error("CANNOT_REMOVE_OWNER");
+    }
+
+    await prisma.podcastMember.delete({ where: { podcastId_userId: { podcastId, userId: targetUserId } } });
+
+    await AuditService.logAction({
+      actorId,
+      action: "PODCAST_MEMBER_REMOVED",
+      entityType: "Podcast",
+      entityId: podcastId,
+      newState: { targetUserId, removedRole: target.role },
+      ipAddress: ip,
+    });
+
+    const podcast = await prisma.podcast.findUnique({ where: { id: podcastId }, select: { name: true } });
+    await NotificationService.notify([targetUserId], {
+      type: "TEAM_REMOVED",
+      title: `Vous ne faites plus partie de l'équipe : ${podcast?.name ?? "podcast"}`,
+      body: `Votre accès collaborateur à ce podcast a été révoqué par l'administration.`,
+      link: "/studio",
+    }, { email: true });
+
+    return { success: true, message: "Membre retiré de l'équipe avec succès." };
   }
 
   // ───────────────────────── STOCKAGE & JOBS ─────────────────────────

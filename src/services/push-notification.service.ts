@@ -238,4 +238,42 @@ export class PushNotificationService {
       console.error("[PushService] Erreur lors de l'envoi push :", e.message);
     }
   }
+
+  /**
+   * Diagnostic d'infrastructure push : vérifie la présence des identifiants Firebase,
+   * le nombre de tokens actifs par plateforme et l'état de la file outbox.
+   */
+  static async getDiagnostics() {
+    const messaging = getMessagingClient();
+    const isFirebaseConfigured = messaging !== null;
+    const totalDevices = await prisma.device.count();
+    const activeTokens = await prisma.pushToken.count({ where: { isActive: true } });
+    const tokensByDevice = await prisma.device.groupBy({
+      by: ["deviceType"],
+      _count: { id: true },
+    });
+    const recentFailedTokens = await prisma.pushToken.count({ where: { isActive: false } });
+    const pendingPushJobs = await prisma.jobQueueItem.count({
+      where: { queueName: "push_notifications", status: "PENDING" },
+    });
+    const failedPushJobs = await prisma.jobQueueItem.count({
+      where: { queueName: "push_notifications", status: "FAILED" },
+    });
+
+    return {
+      provider: "FIREBASE_FCM",
+      isConfigured: isFirebaseConfigured,
+      configurationStatus: isFirebaseConfigured
+        ? "CONFIGURED_AND_READY"
+        : "MISSING_CREDENTIALS (FIREBASE_SERVICE_ACCOUNT_KEY / GOOGLE_APPLICATION_CREDENTIALS / firebase-service-account.json)",
+      metrics: {
+        totalDevices,
+        activeTokens,
+        recentFailedTokens,
+        pendingPushJobs,
+        failedPushJobs,
+        devicesByType: tokensByDevice.map((t) => ({ type: t.deviceType, count: t._count.id })),
+      },
+    };
+  }
 }

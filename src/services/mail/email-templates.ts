@@ -296,6 +296,40 @@ export const Emails = {
     };
   },
 
+  teamMemberAdded(to: string, o: { podcastName: string; roleLabel: string; podcastId: string; inviterName?: string }): Mail {
+    const url = `${APP_URL}/studio/podcasts/${o.podcastId}`;
+    const inviterNote = o.inviterName ? ` par ${esc(o.inviterName)}` : "";
+    const paragraphs = [
+      `Vous avez été ajouté à l'équipe du podcast « ${o.podcastName} » en tant que ${o.roleLabel}.`,
+      "Votre accès est immédiatement actif dans votre Studio Bamako Podcast. Aucune validation ni jeton n'est nécessaire.",
+      "Accédez directement à votre émission : " + url,
+    ];
+
+    const contentHtml = `
+      <p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.65; color: #D4D4D8;">
+        Vous faites désormais partie de l'équipe de l'émission <strong>« ${esc(o.podcastName)} »</strong>${inviterNote} avec le rôle de <strong>${esc(o.roleLabel)}</strong>.
+      </p>
+      <p style="margin: 0 0 16px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.65; color: #D4D4D8;">
+        Vos autorisations sont immédiatement actives dans votre Studio. Vous pouvez commencer à gérer l'émission dès maintenant sans aucune acceptation préalable.
+      </p>
+    `;
+
+    const htmlContent = emailShell({
+      preheader: `Vous avez rejoint l'équipe de « ${o.podcastName} »`,
+      badge: "STUDIO",
+      title: "Accès actif à l'émission",
+      contentHtml,
+      cta: { label: "Ouvrir l’émission", url },
+    });
+
+    return {
+      to,
+      subject: `Vous avez rejoint l'équipe de « ${o.podcastName} »`,
+      html: htmlContent,
+      text: text("Accès actif à l'émission", paragraphs, url),
+    };
+  },
+
   notification(to: string, o: { title: string; body?: string | null; link?: string | null }): Mail {
     const url = o.link ? (o.link.startsWith("http") ? o.link : `${APP_URL}${o.link}`) : undefined;
     const paragraphs = o.body ? [o.body] : [];

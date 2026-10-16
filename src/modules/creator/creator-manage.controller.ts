@@ -18,6 +18,9 @@ const KNOWN: Record<string, [number, string]> = {
   INVALID_URL: [400, "Lien invalide : une adresse http(s) est requise"],
   INVALID_YOUTUBE_URL: [400, "Lien YouTube invalide"],
   MEMBER_NOT_FOUND: [404, "Membre introuvable"],
+  USER_NOT_FOUND: [404, "Aucun utilisateur trouvé avec cet identifiant ou adresse email. Proposez une invitation externe."],
+  USER_SUSPENDED: [403, "Ce compte utilisateur est actuellement suspendu."],
+  MEMBER_ALREADY_EXISTS_WITH_ROLE: [409, "Cet utilisateur fait déjà partie de l'équipe avec un rôle différent. Modifiez son rôle directement."],
   CANNOT_REMOVE_OWNER: [409, "Un podcast doit toujours conserver au moins un propriétaire"],
   CANNOT_EDIT_SELF: [400, "Vous ne pouvez pas modifier votre propre rôle"],
   INVITATION_NOT_FOUND: [404, "Invitation introuvable"],
@@ -112,6 +115,23 @@ export class CreatorManageController {
   });
 
   // Équipe & invitations
+  static directAddMember = run(async (req) => {
+    const b = z
+      .object({
+        userId: id.optional(),
+        email: z.string().email().optional(),
+        role: roleEnum,
+      })
+      .refine((d) => d.userId || d.email, { message: "userId ou email requis" })
+      .parse(req.body);
+    return PodcastTeamService.directAddMember(uid(req), param(req, "podcastId"), b as any, false, req.ip);
+  }, 201);
+
+  static searchUsers = run(async (req) => {
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    return PodcastTeamService.searchUsers(q);
+  });
+
   static updateMember = run((req) => {
     const b = z.object({ role: roleEnum }).parse(req.body);
     return PodcastTeamService.updateMemberRole(uid(req), param(req, "podcastId"), param(req, "userId"), b.role);
