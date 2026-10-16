@@ -16,7 +16,7 @@ export class AdminYouTubeController {
       const { url } = req.body;
       if (!url) return sendError(res, "URL ou identifiant YouTube requis.", "BAD_REQUEST", 400);
 
-      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken);
+      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken, {mode:req.body.mode||"ALL"});
       return sendSuccess(res, data, "Prévisualisation de la chaîne YouTube réussie.");
     } catch (err: any) {
       return sendError(res, err.message || "Erreur de prévisualisation.", "ADMIN_YOUTUBE_ERROR", 400);

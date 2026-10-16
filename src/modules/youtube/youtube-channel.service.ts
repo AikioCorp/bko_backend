@@ -136,10 +136,23 @@ export class YouTubeChannelService {
   /**
    * Résout une chaîne YouTube et prévisualise ses vidéos récentes disponibles dans le flux Atom et l'onglet Vidéos.
    */
-  static async previewChannel(rawInput: string, podcastId?: string, pageToken?: string) {
+  static async previewChannel(rawInput: string, podcastId?: string, pageToken?: string, discovery: unknown = {}) {
+    const options = z.object({mode:z.enum(["STANDARD","SHORTS","ALL"]).default("ALL")}).parse(discovery);
+    const likelyShort=(item:any)=>/#shorts?\b/i.test(item.title+" "+(item.description||""));
+    const matches=(item:any)=>options.mode==="ALL"||(options.mode==="SHORTS"?likelyShort(item):!likelyShort(item));
     const resolved=await YouTubeResolverService.resolveChannel(rawInput);
     let items:any[],nextPageToken:string|null=null,totalResults:number|null=null;
-    if(YouTubeCatalogService.available){const page=await YouTubeCatalogService.page(resolved.channelId,pageToken);items=page.items;nextPageToken=page.nextPageToken;totalResults=page.totalResults;}
+    if(YouTubeCatalogService.available){
+      items=[];let cursor=pageToken;const seen=new Set<string>();const started=Date.now();
+      for(let n=0;n<5;n++){
+        if(cursor){if(seen.has(cursor))throw new Error("YOUTUBE_PAGINATION_ERROR: Pagination répétée. Réessayez.");seen.add(cursor);}
+        const page=await YouTubeCatalogService.page(resolved.channelId,cursor);
+        items.push(...page.items);nextPageToken=page.nextPageToken;totalResults=page.totalResults;
+        if(!nextPageToken||items.filter(i=>matches(i)&&i.embeddable!==false).length>=20||Date.now()-started>=8000)break;
+        cursor=nextPageToken;
+      }
+      items=[...new Map(items.map(i=>[i.youtubeVideoId,i])).values()];
+    }
     else {
       if(pageToken)throw new Error("YOUTUBE_API_KEY_REQUIRED: Une clé YouTube serveur est nécessaire pour les archives.");
       const feed=await SsrfProtectionService.safeFetch(resolved.feedUrl);
@@ -150,7 +163,7 @@ export class YouTubeChannelService {
     const imported=podcastId?await prisma.youtubeImportedVideo.findMany({where:{videoId:{in:ids},youtubeChannel:{podcastId}},select:{videoId:true,localEpisodeId:true}}):[];
     const map=new Map(imported.map(i=>[i.videoId,i.localEpisodeId]));
     const videos=items.map(i=>({videoId:i.youtubeVideoId,youtubeVideoId:i.youtubeVideoId,title:i.title,description:i.description,publishedAt:i.pubDate,thumbnailUrl:i.thumbnailUrl,canonicalUrl:i.enclosureUrl,durationSeconds:i.durationKnown?i.durationSeconds:null,durationLabel:i.durationKnown?this.formatDuration(i.durationSeconds):"Durée inconnue",embeddable:i.embeddable??null,isLikelyShort:/#shorts?\b/i.test(i.title+" "+i.description),alreadyImported:map.has(i.youtubeVideoId),isAlreadyImported:map.has(i.youtubeVideoId),localEpisodeId:map.get(i.youtubeVideoId)||null}));
-    return {channel:resolved,hasApiKey:YouTubeCatalogService.available,source:YouTubeCatalogService.available?"API":"RECENT_FEED",nextPageToken,totalResults,videosCount:videos.length,videos,items:videos,note:YouTubeCatalogService.available?"Vidéos chargées depuis l’API YouTube. Parcourez les pages pour retrouver les anciennes vidéos.":"Vidéos récentes uniquement : ce flux ne contient pas toute la chaîne. Configurez la clé YouTube du serveur pour parcourir les archives."};
+    return {channel:resolved,hasApiKey:YouTubeCatalogService.available,source:YouTubeCatalogService.available?"API":"RECENT_FEED",nextPageToken,totalResults,videosCount:videos.length,discoveryMode:options.mode,discoveryStats:{scanned:videos.length,matching:videos.filter(i=>matches(i)).length,excluded:videos.filter(i=>!matches(i)).length,eligible:videos.filter(i=>matches(i)&&i.embeddable!==false&&!i.isAlreadyImported).length},videos,items:videos,note:YouTubeCatalogService.available?"Vidéos chargées depuis l’API YouTube. Parcourez les pages pour retrouver les anciennes vidéos.":"Vidéos récentes uniquement : ce flux ne contient pas toute la chaîne. Configurez la clé YouTube du serveur pour parcourir les archives."};
   }
 
   static normalizeSettings(input:any={},previous:any={}):YouTubeImportSettings {
@@ -419,7 +432,7 @@ export class YouTubeChannelService {
   /**
    * Importation historique des anciennes vidéos par pagination de l'API YouTube Data v3.
    */
-  static async historicalImport(userId:string,podcastId:string,options:{pageToken?:string;selectedVideoIds?:string[]},isAdmin=false) {
+  static async historicalImport(userId:string,podcastId:string,options:{pageToken?:string;selectedVideoIds?:string[];mode?:string},isAdmin=false) {
     if(!isAdmin){const member=await prisma.podcastMember.findUnique({where:{podcastId_userId:{podcastId,userId}}});if(!member||!["OWNER","ADMIN"].includes(member.role))throw new Error("FORBIDDEN");}
     const channel=await prisma.youtubeChannelSync.findUnique({where:{podcastId}});
     if(!channel)throw new Error("YOUTUBE_NOT_CONNECTED");
@@ -431,7 +444,7 @@ export class YouTubeChannelService {
       await prisma.jobQueueItem.create({data:{queueName:"youtube-importer",jobType:"YOUTUBE_INITIAL_IMPORT",payload:{youtubeChannelSyncId:channel.id,podcastId,selectedVideoIds:ids},maxAttempts:5}});
       return {selectedCount:ids.length,syncStatus:"PENDING",message:"Importation des archives placée en file d’attente."};
     }
-    return this.previewChannel(channel.channelId,podcastId,options.pageToken);
+    return this.previewChannel(channel.channelId,podcastId,options.pageToken,{mode:options.mode||"ALL"});
   }
 
   /**

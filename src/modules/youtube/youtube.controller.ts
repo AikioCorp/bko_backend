@@ -17,7 +17,7 @@ export class YouTubeController {
         return sendError(res, "Veuillez fournir une URL de chaîne ou un identifiant YouTube.", "BAD_REQUEST", 400);
       }
       if(req.body.podcastId){const member=await prisma.podcastMember.findUnique({where:{podcastId_userId:{podcastId:req.body.podcastId,userId:req.user!.id}}});if(!member)return sendError(res,"Vous n’avez pas accès à cette émission.","FORBIDDEN",403);}
-      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken);
+      const data = await YouTubeChannelService.previewChannel(url, req.body.podcastId, req.body.pageToken, {mode:req.body.mode||"ALL"});
       return sendSuccess(res, data, "Chaîne YouTube analysée.");
     } catch (err: any) {
       return sendError(res, err.message || "Impossible d'analyser cette chaîne YouTube.", "YOUTUBE_ERROR", 400);

@@ -240,7 +240,6 @@ export class YouTubeWorkerService {
         // Filtrage des Shorts si excludeShorts est actif (par défaut true)
         const isShort =
           item.enclosureUrl.includes("/shorts/") ||
-          (item.durationKnown && item.durationSeconds > 0 && item.durationSeconds <= 60) ||
           /#shorts?\b/i.test(item.title) ||
           /#shorts?\b/i.test(item.description || "");
 

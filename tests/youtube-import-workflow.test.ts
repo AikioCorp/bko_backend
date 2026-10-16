@@ -12,6 +12,25 @@ const channelId='UC'+'a'.repeat(22),videoId='a'.repeat(11),otherId='b'.repeat(11
 const channel={channelId,title:'Chaîne test',description:'',feedUrl:`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,uploadsPlaylistId:'UU'+'a'.repeat(22)};
 const video=(id=videoId,date='2026-10-15T12:00:00Z'):any=>({guid:id,title:'Entretien',description:'Culture et sciences',pubDate:new Date(date),enclosureUrl:`https://www.youtube.com/watch?v=${id}`,enclosureType:'video/youtube',enclosureLength:null,durationSeconds:3600,durationKnown:true,seasonNumber:null,episodeNumber:null,keywords:[],mediaType:'VIDEO',provider:'YOUTUBE',youtubeVideoId:id,fingerprint:id,embeddable:true});
 
+test('discovery continues past Shorts pages, preserves cursor, and bounds requests',async()=>{
+ const key=process.env.YOUTUBE_API_KEY,resolve=YouTubeResolverService.resolveChannel,page=YouTubeCatalogService.page;
+ process.env.YOUTUBE_API_KEY='test';YouTubeResolverService.resolveChannel=async()=>channel;
+ let calls=0,onlyShorts=false;
+ YouTubeCatalogService.page=async(_id,token)=>{
+  calls++;assert.equal(token,calls===1?undefined:String(calls));
+  return {items:Array.from({length:50},(_,i)=>({...video(String(calls*100+i).padStart(11,'0')),title:onlyShorts||calls===1?'Extrait #shorts':'Entretien'})),nextPageToken:String(calls+1),totalResults:1000};
+ };
+ try{
+  const result=await YouTubeChannelService.previewChannel(channelId,undefined,undefined,{mode:'STANDARD'});
+  assert.equal(calls,2);assert.equal(result.videos.length,100);assert.equal(result.discoveryStats.matching,50);assert.equal(result.discoveryStats.excluded,50);assert.equal(result.nextPageToken,'3');
+  calls=0;onlyShorts=true;
+  const empty=await YouTubeChannelService.previewChannel(channelId,undefined,undefined,{mode:'STANDARD'});
+  assert.equal(calls,5);assert.equal(empty.discoveryStats.matching,0);assert.equal(empty.nextPageToken,'6');
+  calls=0;const shorts=await YouTubeChannelService.previewChannel(channelId,undefined,undefined,{mode:'SHORTS'});assert.equal(calls,1);assert.equal(shorts.discoveryStats.matching,50);
+  await assert.rejects(()=>YouTubeChannelService.previewChannel(channelId,undefined,undefined,{mode:'invalid'}));
+ }finally{YouTubeResolverService.resolveChannel=resolve;YouTubeCatalogService.page=page;if(key===undefined)delete process.env.YOUTUBE_API_KEY;else process.env.YOUTUBE_API_KEY=key;}
+});
+
 test('official catalogue paginates beyond 15 and validates video channel ownership',async()=>{
  const fetch=globalThis.fetch,key=process.env.YOUTUBE_API_KEY;process.env.YOUTUBE_API_KEY='test-only';let wrong=false;
  globalThis.fetch=(async(input:any)=>{const url=new URL(String(input));let data:any;
