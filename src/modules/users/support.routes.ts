@@ -7,7 +7,6 @@ import { prisma } from "../../config/prisma.js";
 import { authenticateToken, AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { requirePermission } from "../../middlewares/permission.middleware.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
-import { PushNotificationService } from "../../services/push-notification.service.js";
 
 import { JWT_SECRET } from "../../config/jwt.js";
 const accessKey = (id:string) => createHmac("sha256", JWT_SECRET).update(`support:${id}`).digest("hex");
@@ -54,12 +53,6 @@ async function notify(tx: any, ticket: any, event: string, key?: string) {
           },
           maxAttempts: 3,
         },
-      });
-      void PushNotificationService.sendToUsers([notif.userId], {
-        title: `[Support] ${event}`,
-        body: ticket.subject,
-        route: notif.link,
-        data: { type: notif.type },
       });
     }
   }

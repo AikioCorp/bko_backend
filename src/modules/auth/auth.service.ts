@@ -45,7 +45,7 @@ export class AccountSuspendedError extends Error {
     if (user.id && user.email) {
       try {
         supportToken = jwt.sign(
-          { id: user.id, email: user.email, roles: [], isSuspended: true },
+          { id: user.id, email: user.email, roles: [], isSuspended: true, purpose: "support" },
           JWT_SECRET,
           { expiresIn: "7d" }
         );
@@ -360,10 +360,6 @@ export class AuthService {
       throw new Error("INVALID_CREDENTIALS");
     }
 
-    if (user.isSuspended) {
-      throw new AccountSuspendedError(user);
-    }
-
     const inputCode = String(params.otpCode || "").trim();
     if (!/^\d{6}$/.test(inputCode)) {
       throw new Error("INVALID_CREDENTIALS");
@@ -376,6 +372,10 @@ export class AuthService {
 
     if (user.otpExpiresAt && user.otpExpiresAt < new Date()) {
       throw new Error("RESET_TOKEN_EXPIRED");
+    }
+
+    if (user.isSuspended) {
+      throw new AccountSuspendedError(user);
     }
 
     // Valider le compte et consommer l'OTP
@@ -916,7 +916,7 @@ export class AuthService {
       });
     } else {
       if (user.isSuspended) {
-        throw new AccountSuspendedError(user);
+        throw new AccountSuspendedError(user.suspendedReason, user.suspendedAt);
       }
       await prisma.user.update({
         where: { id: user.id },
@@ -980,10 +980,6 @@ export class AuthService {
       throw new Error("INVALID_CREDENTIALS");
     }
 
-    if (user.isSuspended) {
-      throw new AccountSuspendedError(user);
-    }
-
     const code = String(params.otpCode || "").trim();
     if (!/^\d{6}$/.test(code)) {
       throw new Error("INVALID_CREDENTIALS");
@@ -996,6 +992,10 @@ export class AuthService {
 
     if (user.otpExpiresAt && user.otpExpiresAt < new Date()) {
       throw new Error("RESET_TOKEN_EXPIRED");
+    }
+
+    if (user.isSuspended) {
+      throw new AccountSuspendedError(user);
     }
 
     // Valider le compte et consommer l'OTP

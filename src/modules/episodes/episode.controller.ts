@@ -1,6 +1,6 @@
 import { ViewerService } from "../interactions/viewer.service.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
-import { formatEpisodeWithMediaFlags } from "../../utils/episode.js";
+import { formatEpisodeWithMediaFlags, redactPremiumEpisodeMedia } from "../../utils/episode.js";
 import { Request, Response } from "express";
 import { EpisodeService } from "./episode.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
@@ -15,9 +15,15 @@ export class EpisodeController {
         return sendError(res, "Épisode introuvable", "EPISODE_NOT_FOUND", 404);
       }
 
-      const userId = (req as AuthenticatedRequest).user?.id;
+      const authUser = (req as AuthenticatedRequest).user;
+      const userId = authUser?.id;
       const viewer = userId ? await ViewerService.forEpisode(userId, episode.id, episode.podcastId) : null;
-      return sendSuccess(res, { ...formatEpisodeWithMediaFlags(episode), viewer });
+      const isAdmin = Boolean(authUser?.roles?.some((r) => ["ADMIN", "SUPER_ADMIN"].includes(r.toUpperCase())));
+      const hasAccess =
+        (!episode.isPremium && !episode.podcast?.isPremium) ||
+        isAdmin ||
+        Boolean(viewer?.hasActiveSubscription || viewer?.isPurchased);
+      return sendSuccess(res, { ...redactPremiumEpisodeMedia(formatEpisodeWithMediaFlags(episode), hasAccess), viewer });
     } catch (error: any) {
       return sendError(res, error.message || "Erreur lors de la récupération de l'épisode.");
     }

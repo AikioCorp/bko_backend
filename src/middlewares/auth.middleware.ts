@@ -14,6 +14,7 @@ export interface AuthenticatedRequest extends Request {
 import { prisma } from "../config/prisma.js";
 
 interface CachedAccountStatus {
+  exists: boolean;
   isSuspended: boolean;
   suspendedReason?: string | null;
   suspendedAt?: Date | null;
@@ -51,9 +52,10 @@ export async function checkUserSuspended(userId: string): Promise<Omit<CachedAcc
     },
   });
   if (!user) {
-    return { isSuspended: false };
+    return { exists: false, isSuspended: false };
   }
   const entry: CachedAccountStatus = {
+    exists: true,
     isSuspended: user.isSuspended,
     suspendedReason: user.suspendedReason,
     suspendedAt: user.suspendedAt,
@@ -76,6 +78,10 @@ export const authenticateToken = async (req: AuthenticatedRequest, res: Response
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (decoded.isSuspended || decoded.purpose === "support") {
+      return sendError(res, "Jeton réservé au support client", "UNAUTHORIZED", 401);
+    }
+
     req.user = {
       id: decoded.id,
       email: decoded.email,
@@ -84,11 +90,14 @@ export const authenticateToken = async (req: AuthenticatedRequest, res: Response
 
     // Contrôle réel côté serveur du statut du compte (suspension / blocage)
     const status = await checkUserSuspended(decoded.id);
+    if (!status.exists) {
+      return sendError(res, "Compte introuvable ou supprimé", "UNAUTHORIZED", 401);
+    }
     if (status.isSuspended) {
       let supportToken: string | undefined;
       try {
         supportToken = jwt.sign(
-          { id: decoded.id, email: status.email || decoded.email, roles: [], isSuspended: true },
+          { id: decoded.id, email: status.email || decoded.email, roles: [], isSuspended: true, purpose: "support" },
           JWT_SECRET,
           { expiresIn: "7d" }
         );
@@ -128,13 +137,15 @@ export const optionalAuthenticateToken = async (req: AuthenticatedRequest, res: 
   if (token) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as any;
-      const status = await checkUserSuspended(decoded.id);
-      if (!status.isSuspended) {
-        req.user = {
-          id: decoded.id,
-          email: decoded.email,
-          roles: decoded.roles || [],
-        };
+      if (!decoded.isSuspended && decoded.purpose !== "support") {
+        const status = await checkUserSuspended(decoded.id);
+        if (status.exists && !status.isSuspended) {
+          req.user = {
+            id: decoded.id,
+            email: decoded.email,
+            roles: decoded.roles || [],
+          };
+        }
       }
     } catch (err) {
       // Ignorer l'erreur pour les utilisateurs anonymes

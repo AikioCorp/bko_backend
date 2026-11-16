@@ -12,10 +12,9 @@ export class FeatureFlags {
   }
 
   // Exige qu'un compte soit vérifié (OTP) avant de pouvoir se connecter.
-  // Désactivé par défaut : le flux client (web) n'implémente pas encore l'étape de
-  // vérification OTP. À activer (REQUIRE_VERIFIED_LOGIN=true) une fois cette étape en place.
+  // Activé par défaut ; peut être désactivé explicitement via REQUIRE_VERIFIED_LOGIN=false.
   static get requireVerifiedLogin(): boolean {
-    return process.env.REQUIRE_VERIFIED_LOGIN === "true";
+    return process.env.REQUIRE_VERIFIED_LOGIN !== "false";
   }
 
   // Si activé, les contenus soumis par les créateurs passent par la file de validation

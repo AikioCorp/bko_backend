@@ -3,6 +3,7 @@ import { prisma } from "../../config/prisma.js";
 import { StorageFactory } from "../../services/storage/storage.factory.js";
 import { LocalMockStorageProvider } from "../../services/storage/local-mock-storage.provider.js";
 import { CreatorProfileService } from "../creator/creator-profile.service.js";
+import { invalidateAccountStatusCache } from "../../middlewares/auth.middleware.js";
 
 export class UserService {
   static async getMe(userId: string) {
@@ -189,9 +190,13 @@ export class UserService {
   }
 
   static async revokeDevice(userId: string, deviceId: string) {
+    const device = await prisma.device.findFirst({ where: { id: deviceId, userId } });
+    if (!device) {
+      throw new Error("Appareil introuvable.");
+    }
     await prisma.session.deleteMany({ where: { userId, deviceId } });
     await prisma.refreshToken.updateMany({ where: { userId, deviceId }, data: { isRevoked: true } });
-    await prisma.device.delete({ where: { id: deviceId } });
+    await prisma.device.deleteMany({ where: { id: deviceId, userId } });
     return { message: "Appareil révoqué" };
   }
 
@@ -319,7 +324,10 @@ export class UserService {
     });
     if (!user) throw new Error("USER_NOT_FOUND");
 
-    if (user.passwordHash && passwordConfirm) {
+    if (user.passwordHash) {
+      if (!passwordConfirm) {
+        throw new Error("Le mot de passe de confirmation est requis.");
+      }
       const match = await bcrypt.compare(passwordConfirm, user.passwordHash);
       if (!match) throw new Error("Mot de passe de confirmation incorrect.");
     }
@@ -342,6 +350,7 @@ export class UserService {
         suspendedAt: new Date(),
       },
     });
+    invalidateAccountStatusCache(userId);
 
     return { message: "Votre compte a été supprimé." };
   }

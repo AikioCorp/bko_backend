@@ -76,3 +76,26 @@ export function formatEpisodeWithMediaFlags(episode: any) {
     primaryVideoSource,
   };
 }
+
+export function redactPremiumEpisodeMedia(episode: any, hasAccess: boolean) {
+  if (!episode) return episode;
+  const isLocked = Boolean(episode.isPremium || episode.podcast?.isPremium) && !hasAccess;
+  if (!isLocked) return episode;
+
+  const redactedSources = (episode.mediaSources || []).map((s: any) => ({
+    ...s,
+    externalUrl: null,
+    embedUrl: null,
+    externalId: null,
+    mediaAssetId: null,
+  }));
+
+  return {
+    ...episode,
+    isLocked: true,
+    mediaSources: redactedSources,
+    primaryAudioSource: null,
+    primaryVideoSource: null,
+    transcripts: [],
+  };
+}

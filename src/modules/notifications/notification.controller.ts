@@ -1,10 +1,23 @@
 import { Response } from "express";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { NotificationService } from "../../services/notification.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 
 import { prisma } from "../../config/prisma.js";
+
+function isAutomationOrAdminAuthorized(req: any): boolean {
+  const secret = process.env.AUTOMATION_SECRET;
+  const provided = typeof req.headers["x-automation-secret"] === "string" ? req.headers["x-automation-secret"] : "";
+  if (secret && provided && Buffer.byteLength(secret) === Buffer.byteLength(provided)) {
+    if (crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(provided))) {
+      return true;
+    }
+  }
+  const roles: string[] = Array.isArray(req.user?.roles) ? req.user.roles : [];
+  return roles.some((r) => ["ADMIN", "SUPER_ADMIN"].includes(String(r).toUpperCase()));
+}
 
 const fail = (res: Response, e: unknown) => {
   if (e instanceof z.ZodError) return sendError(res, "Données invalides", "VALIDATION_ERROR", 400);
@@ -100,14 +113,7 @@ export class NotificationController {
    */
   static async sendCampaign(req: any, res: Response) {
     try {
-      const secret = process.env.AUTOMATION_SECRET || process.env.JWT_SECRET;
-      const providedSecret = req.headers["x-automation-secret"];
-      const user = req.user;
-      const isAuthorized =
-        (secret && providedSecret === secret) ||
-        (user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN"));
-
-      if (!isAuthorized) {
+      if (!isAutomationOrAdminAuthorized(req)) {
         return sendError(res, "Accès réservé au système d'automatisation ou aux administrateurs.", "UNAUTHORIZED", 403);
       }
 
@@ -194,14 +200,7 @@ export class NotificationController {
    */
   static async syncEditorialCuration(req: any, res: Response) {
     try {
-      const secret = process.env.AUTOMATION_SECRET || process.env.JWT_SECRET;
-      const providedSecret = req.headers["x-automation-secret"];
-      const user = req.user;
-      const isAuthorized =
-        (secret && providedSecret === secret) ||
-        (user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN"));
-
-      if (!isAuthorized) {
+      if (!isAutomationOrAdminAuthorized(req)) {
         return sendError(res, "Accès réservé au système d'automatisation ou aux administrateurs.", "UNAUTHORIZED", 403);
       }
 

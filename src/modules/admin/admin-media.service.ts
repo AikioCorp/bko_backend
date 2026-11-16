@@ -2,11 +2,11 @@ import { prisma } from "../../config/prisma.js";
 import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 const s3 = new S3Client({
-  region: process.env.S3_REGION || "auto",
-  endpoint: process.env.S3_ENDPOINT,
+  region: process.env.R2_REGION || process.env.S3_REGION || "auto",
+  endpoint: process.env.R2_ENDPOINT || process.env.S3_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.S3_SECRET_ACCESS_KEY || "",
   },
 });
 
@@ -49,6 +49,7 @@ export class AdminMediaService {
       console.error("Failed to delete from S3:", e);
     }
     
+    await prisma.mediaSource.deleteMany({ where: { mediaAssetId: id } });
     await prisma.mediaAsset.delete({ where: { id } });
     return { success: true };
   }

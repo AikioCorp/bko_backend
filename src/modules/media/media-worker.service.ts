@@ -18,8 +18,8 @@ export class MediaWorkerService {
 
       if (!pending) return null;
 
-      return tx.jobQueueItem.update({
-        where: { id: pending.id },
+      const claimed = await tx.jobQueueItem.updateMany({
+        where: { id: pending.id, status: "PENDING" },
         data: {
           status: "PROCESSING",
           lockedAt: new Date(),
@@ -27,6 +27,8 @@ export class MediaWorkerService {
           attempts: { increment: 1 },
         },
       });
+      if (claimed.count === 0) return null;
+      return tx.jobQueueItem.findUnique({ where: { id: pending.id } });
     });
 
     if (!job) return false;

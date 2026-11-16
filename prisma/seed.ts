@@ -106,14 +106,18 @@ async function main() {
   // 2. COMPTE SUPER ADMIN (SALIKA FAMANTA)
   // ======================================================
   console.log("👤 Validation du compte Super Admin : Salika Famanta...");
-  const adminPasswordHash = await bcrypt.hash("00alpha0010", 10);
+  const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD || (isProduction ? undefined : "00alpha0010");
+  const adminPasswordHash = adminSeedPassword ? await bcrypt.hash(adminSeedPassword, 12) : undefined;
+  if (isProduction && !adminPasswordHash) {
+    console.warn("⚠️ ADMIN_SEED_PASSWORD non défini en production : le mot de passe du compte Super Admin ne sera pas défini/modifié.");
+  }
 
   const superAdmin = await prisma.user.upsert({
     where: { email: "salika.famanta@gmail.com" },
     update: {
       username: "salika",
       phoneNumber: "+22370009007",
-      passwordHash: adminPasswordHash,
+      ...(adminPasswordHash ? { passwordHash: adminPasswordHash } : {}),
       fullName: "Salika Famanta",
       isVerified: true,
     },
@@ -122,7 +126,7 @@ async function main() {
       username: "salika",
       phoneNumber: "+22370009007",
       fullName: "Salika Famanta",
-      passwordHash: adminPasswordHash,
+      ...(adminPasswordHash ? { passwordHash: adminPasswordHash } : {}),
       isVerified: true,
       userRoles: {
         create: [
@@ -137,6 +141,11 @@ async function main() {
   // ======================================================
   // 3. INGESTION DU CATALOGUE DE 55 PODCASTS & CRÉATEURS
   // ======================================================
+  if (seedMode === "reference") {
+    console.log("✅ Seed en mode 'reference' terminé (référentiels et rôles uniquement).");
+    return;
+  }
+
   console.log("📚 Ingestion du catalogue officiel des 55 podcasts Afrique & Diaspora...");
 
   const podcastsCatalogue = [

@@ -1,4 +1,5 @@
 import { Response } from "express";
+import crypto from "node:crypto";
 import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
 import { AdvisorService } from "./advisor.service.js";
@@ -103,10 +104,16 @@ export class AdvisorController {
    */
   static async handleM2mAction(req: any, res: Response) {
     try {
-      const secret = process.env.AUTOMATION_SECRET || process.env.JWT_SECRET;
-      const providedSecret = req.headers["x-automation-secret"];
+      const secret = process.env.AUTOMATION_SECRET;
+      const provided = typeof req.headers["x-automation-secret"] === "string" ? req.headers["x-automation-secret"] : "";
+      const isAuthorized = Boolean(
+        secret &&
+          provided &&
+          Buffer.byteLength(secret) === Buffer.byteLength(provided) &&
+          crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(provided))
+      );
 
-      if (!secret || providedSecret !== secret) {
+      if (!isAuthorized) {
         return sendError(res, "Accès réservé au système d'automatisation.", "UNAUTHORIZED", 403);
       }
 

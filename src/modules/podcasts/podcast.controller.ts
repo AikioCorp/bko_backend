@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from "../../middlewares/auth.middleware.js";
 import { Request, Response } from "express";
 import { PodcastService } from "./podcast.service.js";
 import { sendSuccess, sendError } from "../../utils/response.js";
+import { redactPremiumEpisodeMedia } from "../../utils/episode.js";
 
 export class PodcastController {
   static async listPodcasts(req: Request, res: Response) {
@@ -59,9 +60,18 @@ export class PodcastController {
         return sendError(res, "Podcast introuvable", "PODCAST_NOT_FOUND", 404);
       }
 
-      const userId = (req as AuthenticatedRequest).user?.id;
+      const authUser = (req as AuthenticatedRequest).user;
+      const userId = authUser?.id;
       const viewer = userId ? await ViewerService.forPodcast(userId, podcast.id, podcast.episodes.map((e: any) => e.id)) : null;
-      return sendSuccess(res, { ...podcast, viewer });
+      const isAdmin = Boolean(authUser?.roles?.some((r) => ["ADMIN", "SUPER_ADMIN"].includes(r.toUpperCase())));
+      const episodes = podcast.episodes.map((ep: any) => {
+        const hasAccess =
+          (!ep.isPremium && !podcast.isPremium) ||
+          isAdmin ||
+          Boolean(viewer?.hasActiveSubscription || viewer?.purchasedEpisodeIds?.includes(ep.id));
+        return redactPremiumEpisodeMedia(ep, hasAccess);
+      });
+      return sendSuccess(res, { ...podcast, episodes, viewer });
     } catch (error: any) {
       return sendError(res, error.message || "Erreur lors de la récupération du podcast.");
     }

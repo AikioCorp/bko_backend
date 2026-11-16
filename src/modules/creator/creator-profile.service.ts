@@ -160,9 +160,39 @@ export class CreatorProfileService {
     const profile = await prisma.creatorProfile.findUnique({ where: { userId } });
     if (!profile) throw new Error("CREATOR_PROFILE_NOT_FOUND");
 
+    const updateData: Record<string, any> = {};
+    if (data.displayName !== undefined) {
+      if (typeof data.displayName !== "string" || !data.displayName.trim() || data.displayName.trim().length > 100) {
+        throw new Error("INVALID_CREATOR_NAME");
+      }
+      updateData.displayName = data.displayName.trim();
+    }
+    if (data.bio !== undefined) {
+      if (data.bio !== null && (typeof data.bio !== "string" || data.bio.length > 2000)) {
+        throw new Error("INVALID_CREATOR_BIO");
+      }
+      updateData.bio = data.bio;
+    }
+    if (data.avatar !== undefined) updateData.avatar = typeof data.avatar === "string" ? data.avatar : null;
+    if (data.banner !== undefined) updateData.banner = typeof data.banner === "string" ? data.banner : null;
+    if (data.countryId !== undefined) updateData.countryId = typeof data.countryId === "string" ? data.countryId : null;
+    if (data.website !== undefined) {
+      if (data.website) {
+        try {
+          const url = new URL(data.website);
+          if (!["https:", "http:"].includes(url.protocol)) throw new Error();
+        } catch {
+          throw new Error("INVALID_URL");
+        }
+      }
+      updateData.website = data.website || null;
+    }
+    if (data.socialLinks !== undefined) updateData.socialLinks = data.socialLinks;
+    if (data.personId !== undefined) updateData.personId = typeof data.personId === "string" ? data.personId : null;
+
     return prisma.creatorProfile.update({
       where: { userId },
-      data,
+      data: updateData,
       include: {
         person: true,
         country: true,
@@ -177,15 +207,24 @@ export class CreatorProfileService {
         person: {
           include: {
             podcastAppearances: {
+              where: { podcast: { status: "PUBLISHED" } },
               include: { podcast: true },
             },
           },
         },
         country: true,
         user: {
-          include: {
+          select: {
+            id: true,
+            fullName: true,
+            avatar: true,
             podcastMemberships: {
-              include: { podcast: true },
+              where: { podcast: { status: "PUBLISHED" } },
+              select: {
+                id: true,
+                role: true,
+                podcast: true,
+              },
             },
           },
         },

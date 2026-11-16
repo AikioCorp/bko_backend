@@ -53,18 +53,7 @@ export class NotificationService {
         })
         .catch((err: any) => console.error("[notification:outbox] échec mise en file push :", err.message));
 
-      // 2. Envoi Push direct immédiat (FCM / APNs) pour réactivité instantanée
-      void PushNotificationService.sendToUsers(ids, {
-        title: n.title,
-        body: n.body || "",
-        route: link,
-        data: {
-          type: n.type,
-          actionLabel: actionLabel || "Ouvrir",
-        },
-      });
-
-      // 3. Email optionnel avec template adapté
+      // 2. Email optionnel avec template adapté
       if (opts.email) {
         const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true, fullName: true } });
         const podcastIdMatch = link?.match(/\/studio\/podcasts\/([a-zA-Z0-9_-]+)/);
