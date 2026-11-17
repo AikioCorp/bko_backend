@@ -38,6 +38,21 @@ const updateStatusSchema = z.object({
 });
 
 export class StudioBookingController {
+  static async getAvailability(req: Request, res: Response) {
+    try {
+      const date = typeof req.query.date === "string" ? req.query.date : "";
+      const studioLocation =
+        typeof req.query.studioLocation === "string" ? req.query.studioLocation : undefined;
+      if (!date) {
+        return sendError(res, "Paramètre date requis (YYYY-MM-DD)", "MISSING_PARAM", 400);
+      }
+      const data = await StudioBookingService.getBookedSlots(date, studioLocation);
+      return sendSuccess(res, data);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la vérification des disponibilités");
+    }
+  }
+
   static async submitBooking(req: Request, res: Response) {
     try {
       const parsed = createBookingSchema.parse(req.body);
@@ -47,6 +62,9 @@ export class StudioBookingController {
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return sendError(res, "Données de formulaire invalides", "VALIDATION_ERROR", 400, error.flatten().fieldErrors);
+      }
+      if (error?.code === "SLOT_UNAVAILABLE" || error?.statusCode === 409) {
+        return sendError(res, error.message, "SLOT_UNAVAILABLE", 409);
       }
       return sendError(res, error.message || "Erreur lors de l'enregistrement de votre demande Studio");
     }
@@ -59,6 +77,78 @@ export class StudioBookingController {
       return sendSuccess(res, bookings);
     } catch (error: any) {
       return sendError(res, error.message || "Impossible de récupérer vos réservations");
+    }
+  }
+
+  static async cancelMyBooking(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
+      const updated = await StudioBookingService.cancelMyBooking(req.params.id, req.user.id);
+      return sendSuccess(res, updated, "Demande annulée avec succès");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error.message || "Impossible d'annuler cette réservation",
+        "CANCEL_ERROR",
+        error?.statusCode || 400
+      );
+    }
+  }
+
+  static async payDeposit(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
+      const depositAmount = Number(req.body?.depositAmount);
+      const paymentMethod =
+        typeof req.body?.paymentMethod === "string" ? req.body.paymentMethod : "ORANGE_MONEY";
+      if (!Number.isFinite(depositAmount) || depositAmount < 1000) {
+        return sendError(res, "Montant d'acompte invalide (min. 1 000 FCFA)", "INVALID_AMOUNT", 400);
+      }
+      const updated = await StudioBookingService.payDeposit(req.params.id, req.user.id, {
+        depositAmount: Math.round(depositAmount),
+        paymentMethod,
+      });
+      return sendSuccess(res, updated, "Acompte validé et créneau confirmé !");
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors du paiement de l'acompte", "DEPOSIT_ERROR", 400);
+    }
+  }
+
+  static async downloadInvoice(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Authentification requise", "UNAUTHORIZED", 401);
+      const isAdmin = (req.user.roles || []).some((r: string) =>
+        ["ADMIN", "SUPER_ADMIN"].includes(r.toUpperCase())
+      );
+      const { reference, buffer } = await StudioBookingService.getInvoicePdf(
+        req.params.id,
+        req.user.id,
+        isAdmin
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="facture-${reference}.pdf"`);
+      return res.send(buffer);
+    } catch (error: any) {
+      return sendError(res, error.message || "Impossible de générer la facture", "INVOICE_ERROR", 400);
+    }
+  }
+
+  static async adminSetDeliverables(req: Request, res: Response) {
+    try {
+      const deliverablesUrl =
+        typeof req.body?.deliverablesUrl === "string" ? req.body.deliverablesUrl : "";
+      const deliverablesNote =
+        typeof req.body?.deliverablesNote === "string" ? req.body.deliverablesNote : undefined;
+      if (!deliverablesUrl.trim()) {
+        return sendError(res, "URL des fichiers livrables requise", "MISSING_URL", 400);
+      }
+      const updated = await StudioBookingService.adminSetDeliverables(req.params.id, {
+        deliverablesUrl,
+        deliverablesNote,
+      });
+      return sendSuccess(res, updated, "Livrables enregistrés et client notifié !");
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de l'ajout des livrables");
     }
   }
 

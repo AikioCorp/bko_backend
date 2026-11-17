@@ -10,10 +10,25 @@ const AdvertiserInquirySchema = z.object({
   phone: z.string().optional().nullable(),
   targetPeriod: z.string().optional().nullable(),
   budget: z.string().optional().nullable(),
+  podcastId: z.string().optional().nullable(),
+  slotType: z.enum(["PRE_ROLL", "MID_ROLL", "POST_ROLL", "HOST_READ"]).optional().nullable(),
+  targetLanguage: z.string().optional().nullable(),
+  targetTopic: z.string().optional().nullable(),
   message: z.string().min(5, "Le message doit comporter au moins 5 caractères"),
 });
 
 export class AdController {
+  static async getMarketplace(req: Request, res: Response) {
+    try {
+      const language = typeof req.query.language === "string" ? req.query.language : undefined;
+      const category = typeof req.query.category === "string" ? req.query.category : undefined;
+      const items = await AdService.getSponsorMarketplace({ language, category });
+      return sendSuccess(res, items);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors du chargement de la place de marché.");
+    }
+  }
+
   /**
    * Endpoint public : récupérer les bannières actives pour un emplacement.
    */

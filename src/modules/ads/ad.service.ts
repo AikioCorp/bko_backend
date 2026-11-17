@@ -201,4 +201,60 @@ export class AdService {
       },
     });
   }
+
+  static async getSponsorMarketplace(filters?: { language?: string; category?: string }) {
+    const where: any = {
+      status: "PUBLISHED",
+      episodes: { some: { status: "PUBLISHED" } },
+    };
+    if (filters?.language) {
+      where.primaryLanguageCode = filters.language;
+    }
+    if (filters?.category) {
+      where.categories = { some: { category: { slug: filters.category } } };
+    }
+
+    const podcasts = await prisma.podcast.findMany({
+      where,
+      take: 24,
+      orderBy: [{ isOfficial: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        cover: true,
+        shortDescription: true,
+        primaryLanguage: { select: { code: true, name: true } },
+        categories: { select: { category: { select: { name: true, slug: true } } } },
+        _count: {
+          select: {
+            followers: true,
+            episodes: { where: { status: "PUBLISHED" } },
+          },
+        },
+      },
+    });
+
+    return podcasts.map((p) => {
+      const followers = p._count.followers || 0;
+      const episodes = p._count.episodes || 0;
+      const baseRate = Math.max(25000, Math.min(150000, 25000 + followers * 500 + episodes * 250));
+      return {
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        cover: p.cover,
+        shortDescription: p.shortDescription,
+        language: p.primaryLanguage,
+        categories: p.categories.map((c) => c.category),
+        followersCount: followers,
+        episodesCount: episodes,
+        slots: [
+          { type: "PRE_ROLL", label: "Pre-Roll (15s début)", priceFcfa: baseRate },
+          { type: "MID_ROLL", label: "Mid-Roll (30s milieu)", priceFcfa: Math.round(baseRate * 1.4) },
+          { type: "HOST_READ", label: "Lecture par l'animateur", priceFcfa: Math.round(baseRate * 1.8) },
+        ],
+      };
+    });
+  }
 }

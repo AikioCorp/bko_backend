@@ -16,6 +16,7 @@ import { SearchController } from "../../modules/search/search.controller.js";
 import { DiscoveryController } from "../../modules/discovery/discovery.controller.js";
 import { StudioOfferController } from "../../modules/studio/StudioOfferController.js";
 import { StudioBookingController } from "../../modules/studio/studio-booking.controller.js";
+import { MonetizationController } from "../../modules/monetization/monetization.controller.js";
 import { ShowSuggestionController } from "../../modules/discovery/show-suggestion.controller.js";
 import { ReferentialController } from "../../modules/referentials/referential.controller.js";
 import { CreatorController } from "../../modules/creator/creator.controller.js";
@@ -583,11 +584,27 @@ router.patch("/admin/studio-offers/:id", authenticateToken, requirePermission("o
 router.delete("/admin/studio-offers/:id", authenticateToken, requirePermission("offers.delete"), StudioOfferController.deleteOffer);
 
 // --- STUDIO BOOKINGS (RÉSERVATIONS & DEMANDES) ---
+router.get("/studio/bookings/availability", StudioBookingController.getAvailability);
 router.post("/studio/bookings", optionalAuthenticateToken, StudioBookingController.submitBooking);
 router.get("/studio/bookings/my", authenticateToken, StudioBookingController.getMyBookings);
+router.patch("/studio/bookings/:id/cancel", authenticateToken, StudioBookingController.cancelMyBooking);
+router.post("/studio/bookings/:id/deposit", authenticateToken, StudioBookingController.payDeposit);
+router.get("/studio/bookings/:id/invoice", authenticateToken, StudioBookingController.downloadInvoice);
 router.get("/studio/bookings/reference/:reference", StudioBookingController.getBookingByReference);
 router.get("/admin/studio/bookings", authenticateToken, requirePermission("offers.view"), StudioBookingController.adminListBookings);
 router.patch("/admin/studio/bookings/:id/status", authenticateToken, requirePermission("offers.edit"), StudioBookingController.adminUpdateBooking);
+router.patch("/admin/studio/bookings/:id/deliverables", authenticateToken, requirePermission("offers.edit"), StudioBookingController.adminSetDeliverables);
+
+// --- MONÉTISATION & SOUTIEN CRÉATEURS (Tips, Codes Promo, Pass Cadeaux, Sponsoring Marketplace) ---
+router.post("/podcasts/:id/tip", optionalAuthenticateToken, MonetizationController.createTip);
+router.get("/podcasts/:id/tips", MonetizationController.getPodcastTips);
+router.post("/subscriptions/promo/validate", MonetizationController.validatePromo);
+router.get("/admin/promo-codes", authenticateToken, requirePermission("offers.view"), MonetizationController.adminListPromos);
+router.post("/admin/promo-codes", authenticateToken, requirePermission("offers.edit"), MonetizationController.adminCreatePromo);
+router.post("/subscriptions/gift", optionalAuthenticateToken, MonetizationController.purchaseGiftPass);
+router.post("/subscriptions/gift/redeem", authenticateToken, MonetizationController.redeemGiftPass);
+router.get("/subscriptions/gifts/my", authenticateToken, MonetizationController.getMyGifts);
+router.get("/ads/marketplace", AdController.getMarketplace);
 
 // --- SHOW SUGGESTIONS (PROPOSER UNE ÉMISSION) ---
 router.post("/discovery/suggestions", optionalAuthenticateToken, ShowSuggestionController.submitSuggestion);

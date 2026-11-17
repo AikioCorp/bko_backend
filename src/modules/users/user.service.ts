@@ -41,6 +41,7 @@ export class UserService {
         languagePreferences: { include: { language: true } },
         topicPreferences: { include: { topic: true } },
         countryPreferences: { include: { country: true } },
+        follows: { select: { podcastId: true } },
         notificationPreference: true,
         recommendationProfile: {
           select: {
@@ -65,7 +66,8 @@ export class UserService {
       )
     );
 
-    const { userRoles, passwordHash, ...cleanUser } = user;
+    const { userRoles, passwordHash, follows, ...cleanUser } = user;
+    const followedPodcastIds = (follows || []).map((pf) => pf.podcastId);
     const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
@@ -78,6 +80,7 @@ export class UserService {
       roles,
       permissions,
       hasPreferences,
+      followedPodcastIds,
       onboardingCompleted,
       onboardingState,
       hasStudioAccess: studioAccess.canAccess,

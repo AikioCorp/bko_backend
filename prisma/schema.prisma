@@ -351,6 +351,9 @@ model User {
   paymentTransactions PaymentTransaction[]
   studioBookings      StudioBooking[]
   showSuggestions     ShowSuggestion[]
+  creatorTips         CreatorTip[]
+  giftPassesBought    GiftPass[]       @relation("GiftBuyer")
+  giftPassesRedeemed  GiftPass[]       @relation("GiftRedeemer")
 }
 
 model Role {
@@ -643,6 +646,8 @@ model Podcast {
   recommendationImpressions RecommendationImpression[]
   attributionInteractions RecommendationInteraction[]
   subscriptionPlans SubscriptionPlan[]
+  creatorTips       CreatorTip[]
+  sponsorInquiries  AdvertiserInquiry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -802,6 +807,7 @@ model Episode {
   EpisodeLike EpisodeLike[]
   Comment     Comment[]
   paymentTransactions PaymentTransaction[]
+  creatorTips         CreatorTip[]
 
   @@unique([podcastId, slug])
   @@index([publishedAt])
@@ -1671,18 +1677,23 @@ model AdCampaign {
 }
 
 model AdvertiserInquiry {
-  id           String    @id @default(cuid())
-  company      String
-  contactName  String
-  email        String
-  phone        String?
-  targetPeriod String?
-  budget       String?
-  message      String    @db.Text
-  status       String    @default("PENDING")
-  notes        String?   @db.Text
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  company        String
+  contactName    String
+  email          String
+  phone          String?
+  targetPeriod   String?
+  budget         String?
+  podcastId      String?
+  podcast        Podcast?  @relation(fields: [podcastId], references: [id], onDelete: SetNull)
+  slotType       String?   // PRE_ROLL, MID_ROLL, POST_ROLL, HOST_READ
+  targetLanguage String?
+  targetTopic    String?
+  message        String    @db.Text
+  status         String    @default("PENDING")
+  notes          String?   @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([status, createdAt])
 }
@@ -1743,6 +1754,16 @@ model StudioBooking {
   currency          String            @default("XOF")
   status            StudioBookingStatus @default(PENDING)
   adminNotes        String?           @db.Text
+
+  // Acompte & Livrables post-session
+  depositAmount     Int?
+  depositStatus     String            @default("UNPAID") // UNPAID, PAID
+  depositMethod     String?
+  depositRef        String?
+  depositPaidAt     DateTime?
+  deliverablesUrl   String?
+  deliverablesNote  String?           @db.Text
+  deliveredAt       DateTime?
 
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
@@ -2047,6 +2068,7 @@ model SubscriptionPlan {
   podcastId   String?
   podcast     Podcast?          @relation(fields: [podcastId], references: [id], onDelete: Cascade)
   subscriptions UserSubscription[]
+  giftPasses    GiftPass[]
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 }
@@ -2087,6 +2109,65 @@ model PaymentTransaction {
   createdAt      DateTime          @default(now())
 
   @@index([userId, createdAt])
+}
+
+model CreatorTip {
+  id             String   @id @default(cuid())
+  podcastId      String
+  podcast        Podcast  @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  episodeId      String?
+  episode        Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  supporterName  String
+  supporterEmail String?
+  message        String?  @db.Text
+  amount         Int      // Montant en FCFA
+  currency       String   @default("XOF")
+  paymentMethod  String   @default("ORANGE_MONEY") // ORANGE_MONEY, WAVE, MOOV_MONEY, CARD
+  phoneNumber    String?
+  transactionRef String   @unique
+  status         String   @default("COMPLETED") // COMPLETED, PENDING, FAILED
+  createdAt      DateTime @default(now())
+
+  @@index([podcastId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model PromoCode {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  description   String?
+  discountType  String    @default("PERCENT") // PERCENT | FIXED
+  discountValue Int       // % (ex: 20) ou montant FCFA (ex: 500)
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model GiftPass {
+  id               String           @id @default(cuid())
+  code             String           @unique
+  planId           String
+  plan             SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  buyerUserId      String?
+  buyer            User?            @relation("GiftBuyer", fields: [buyerUserId], references: [id], onDelete: SetNull)
+  recipientName    String?
+  recipientEmail   String?
+  message          String?          @db.Text
+  amount           Int
+  paymentMethod    String           @default("ORANGE_MONEY")
+  status           String           @default("AVAILABLE") // AVAILABLE, REDEEMED, CANCELLED
+  redeemedByUserId String?
+  redeemedBy       User?            @relation("GiftRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+  redeemedAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([status, createdAt])
 }
 
 
