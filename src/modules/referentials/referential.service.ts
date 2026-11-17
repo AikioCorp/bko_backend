@@ -24,6 +24,7 @@ export class ReferentialService {
       where: { slug },
       include: {
         podcasts: {
+          where: { podcast: { status: "PUBLISHED" } },
           include: {
             podcast: {
               include: {
@@ -78,6 +79,7 @@ export class ReferentialService {
       include: {
         aliases: true,
         podcasts: {
+          where: { podcast: { status: "PUBLISHED" } },
           include: {
             podcast: {
               include: {
@@ -88,6 +90,7 @@ export class ReferentialService {
           },
         },
         episodes: {
+          where: { episode: { status: "PUBLISHED", podcast: { status: "PUBLISHED" } } },
           include: {
             episode: {
               include: {

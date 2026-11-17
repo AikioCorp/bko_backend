@@ -418,8 +418,10 @@ export class YouTubeChannelService {
       statusCounts[s.status] = s._count.id;
     }
 
+    const { webSubSecret, ...safeChannel } = channel;
+
     return {
-      channel,
+      channel: safeChannel,
       counts: {
         totalDiscovered: channel._count.importedVideos,
         imported: statusCounts["IMPORTED"] || 0,

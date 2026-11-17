@@ -122,7 +122,21 @@ export class StudioBookingService {
   static async getBookingByReference(reference: string) {
     return prisma.studioBooking.findUnique({
       where: { reference },
-      include: {
+      select: {
+        id: true,
+        reference: true,
+        needType: true,
+        podcastName: true,
+        preferredDate: true,
+        timeSlot: true,
+        durationHours: true,
+        participantsCount: true,
+        studioLocation: true,
+        estimatedPrice: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
         offer: true,
       },
     });

@@ -29,6 +29,7 @@ export class SearchService {
     }
 
     const searchTerm = query.trim();
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 20), 50);
 
     // Recherche parallèle multi-entités (Podcasts, Épisodes, Personnes, Topics, Organisations, Passages/Transcripts)
     const [podcasts, episodes, people, topics, organizations, matchingSegments] = await Promise.all([
@@ -48,13 +49,14 @@ export class SearchService {
           categories: { include: { category: true } },
           _count: { select: { episodes: true, followers: true } },
         },
-        take: limit,
+        take: safeLimit,
       }),
 
       // 2. Épisodes
       prisma.episode.findMany({
         where: {
           status: "PUBLISHED",
+          podcast: { status: "PUBLISHED" },
           OR: [
             { title: { contains: searchTerm, mode: "insensitive" } },
             { description: { contains: searchTerm, mode: "insensitive" } },
@@ -64,7 +66,7 @@ export class SearchService {
           podcast: { include: { country: true, primaryLanguage: true } },
           mediaSources: true,
         },
-        take: limit,
+        take: safeLimit,
       }),
 
       // 3. Personnes
@@ -80,7 +82,7 @@ export class SearchService {
           aliases: true,
           _count: { select: { episodeAppearances: true, podcastAppearances: true } },
         },
-        take: limit,
+        take: safeLimit,
       }),
 
       // 4. Topics
@@ -96,7 +98,7 @@ export class SearchService {
           aliases: true,
           _count: { select: { podcasts: true, episodes: true } },
         },
-        take: limit,
+        take: safeLimit,
       }),
 
       // 5. Organisations
@@ -110,11 +112,39 @@ export class SearchService {
         include: {
           _count: { select: { podcasts: true } },
         },
-        take: limit,
+        take: safeLimit,
       }),
 
       // 6. Passages d'Épisodes (Recherche dans les Transcriptions)
-      Promise.resolve([] as any[]),
+      prisma.transcriptSegment.findMany({
+        where: {
+          text: { contains: searchTerm, mode: "insensitive" },
+          transcript: {
+            status: "READY",
+            visibility: "PUBLIC",
+            episode: {
+              status: "PUBLISHED",
+              isPremium: false,
+              podcast: { status: "PUBLISHED", isPremium: false },
+            },
+          },
+        },
+        include: {
+          transcript: {
+            include: {
+              episode: {
+                select: {
+                  id: true,
+                  title: true,
+                  slug: true,
+                  podcast: { select: { name: true, slug: true, cover: true } },
+                },
+              },
+            },
+          },
+        },
+        take: safeLimit,
+      }),
     ]);
 
     const passages = matchingSegments.map((s) => ({
@@ -185,6 +215,7 @@ export class SearchService {
       prisma.episode.findMany({
         where: {
           status: "PUBLISHED",
+          podcast: { status: "PUBLISHED" },
           title: { contains: searchTerm, mode: "insensitive" },
         },
         select: {

@@ -23,7 +23,23 @@ interface CacheEntry {
 export class PersonalizationEngineService {
   private static readonly ENGINE_VERSION = "v1.2.0";
   private static readonly CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+  private static readonly MAX_CACHE_ENTRIES = 500;
   private static cache = new Map<string, CacheEntry>();
+
+  private static setHomeCache(key: string, entry: CacheEntry) {
+    const now = Date.now();
+    if (this.cache.size >= this.MAX_CACHE_ENTRIES) {
+      for (const [k, v] of this.cache.entries()) {
+        if (v.expiresAt <= now) this.cache.delete(k);
+      }
+      while (this.cache.size >= this.MAX_CACHE_ENTRIES) {
+        const oldestKey = this.cache.keys().next().value;
+        if (!oldestKey) break;
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, entry);
+  }
 
   private static sectionPools = new Map<string, { items: any[]; personalized: boolean; expiresAt: number }>();
   private static ranker = new HybridRankingStrategy();
@@ -543,7 +559,7 @@ export class PersonalizationEngineService {
     };
 
     // Mise en cache
-    if (!heroOptions.refresh) this.cache.set(cacheKey, {
+    if (!heroOptions.refresh) this.setHomeCache(cacheKey, {
       data: response,
       expiresAt: Date.now() + this.CACHE_TTL_MS,
       userId,

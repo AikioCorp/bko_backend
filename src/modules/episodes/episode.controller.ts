@@ -31,8 +31,10 @@ export class EpisodeController {
 
   static async listRecentEpisodes(req: Request, res: Response) {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const rawOffset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 100) : 20;
+      const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
 
       const result = await EpisodeService.getRecentEpisodes(limit, offset);
 
@@ -55,8 +57,10 @@ export class EpisodeController {
       const mediaType = (req.query.mediaType as any) || "ALL";
       const duration = (req.query.duration as any) || "ALL";
       const sort = (req.query.sort as any) || "recent";
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 24;
-      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : 24;
+      const rawOffset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 100) : 24;
+      const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
 
       const result = await EpisodeService.getCatalogEpisodes({
         search,

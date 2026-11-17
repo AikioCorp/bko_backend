@@ -173,7 +173,9 @@ export class AdminYouTubeController {
           _count: { select: { importedVideos: true } },
         },
       });
-      return sendSuccess(res, channel);
+      if (!channel) return sendSuccess(res, null);
+      const { webSubSecret, ...safeChannel } = channel;
+      return sendSuccess(res, safeChannel);
     } catch (err: any) {
       return sendError(res, err.message, "ADMIN_YOUTUBE_ERROR", 400);
     }
@@ -209,7 +211,8 @@ export class AdminYouTubeController {
         },
       });
 
-      return sendSuccess(res, updated, "Paramètres mis à jour.");
+      const { webSubSecret, ...safeUpdated } = updated;
+      return sendSuccess(res, safeUpdated, "Paramètres mis à jour.");
     } catch (err: any) {
       if (err instanceof z.ZodError) return sendError(res, "Vérifiez les réglages de la chaîne.", "VALIDATION_ERROR", 400, err.flatten());
       return sendError(res, err.message, "ADMIN_YOUTUBE_ERROR", 400);
@@ -273,7 +276,7 @@ export class AdminYouTubeController {
         },
         orderBy: { createdAt: "desc" },
       });
-      return sendSuccess(res, channels);
+      return sendSuccess(res, channels.map(({ webSubSecret, ...safeChannel }) => safeChannel));
     } catch (err: any) {
       return sendError(res, err.message, "ADMIN_YOUTUBE_ERROR", 400);
     }

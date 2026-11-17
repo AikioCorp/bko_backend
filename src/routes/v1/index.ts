@@ -392,7 +392,7 @@ router.get("/organizations/:slug", async (req, res) => {
       where: { slug: req.params.slug },
       include: {
         country: true,
-        podcasts: { include: { country: true, primaryLanguage: true } },
+        podcasts: { where: { status: "PUBLISHED" }, include: { country: true, primaryLanguage: true } },
       },
     });
     if (!org) return res.status(404).json({ success: false, message: "Organisation introuvable" });

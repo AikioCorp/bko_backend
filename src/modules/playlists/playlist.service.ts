@@ -124,6 +124,12 @@ export class PlaylistService {
       throw new Error("FORBIDDEN");
     }
 
+    if (playlist.userId !== currentUserId) {
+      playlist.items = playlist.items.filter(
+        (i) => i.episode?.status === "PUBLISHED" && (i.episode?.podcast as any)?.status === "PUBLISHED"
+      );
+    }
+
     return playlist;
   }
 

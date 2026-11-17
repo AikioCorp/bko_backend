@@ -124,6 +124,7 @@ export class DownloadService {
       where: {
         queueName: "REMOTE_DOWNLOAD",
         status: "PENDING",
+        payload: { path: ["userId"], equals: userId },
       },
       take: 50,
       orderBy: { createdAt: "desc" },
@@ -178,6 +179,7 @@ export class DownloadService {
       where: {
         queueName: "REMOTE_DOWNLOAD",
         status: "PENDING",
+        payload: { path: ["userId"], equals: userId },
       },
       orderBy: { createdAt: "asc" },
       take: 20,

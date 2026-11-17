@@ -12,20 +12,29 @@ export class CollectionService {
   }
 
   static async getCollectionBySlug(slug: string) {
-    return prisma.collection.findUnique({
+    const collection = await prisma.collection.findUnique({
       where: { slug },
       include: {
         items: {
           orderBy: { position: "asc" },
           include: {
             podcast: { include: { country: true, primaryLanguage: true } },
-            episode: { include: { mediaSources: true } },
+            episode: { include: { mediaSources: true, podcast: { select: { status: true } } } },
             person: true,
             topic: true,
           },
         },
       },
     });
+    if (!collection) return null;
+    return {
+      ...collection,
+      items: collection.items.filter((item) => {
+        if (item.podcast && item.podcast.status !== "PUBLISHED") return false;
+        if (item.episode && (item.episode.status !== "PUBLISHED" || item.episode.podcast?.status !== "PUBLISHED")) return false;
+        return true;
+      }),
+    };
   }
 
   static async createCollection(data: { title: string; description?: string; cover?: string; isFeatured?: boolean }) {
