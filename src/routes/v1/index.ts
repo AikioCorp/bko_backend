@@ -154,6 +154,7 @@ router.post("/auth/login", authLimiter, accountLimiter(10), AuthController.login
 router.post("/auth/otp-login/send", authLimiter, accountLimiter(5), AuthController.requestOtpLogin);
 router.post("/auth/otp-login/verify", authLimiter, accountLimiter(10), AuthController.verifyOtpLogin);
 router.post("/auth/google", authLimiter, AuthController.googleLogin);
+router.post("/auth/apple", authLimiter, AuthController.appleLogin);
 router.post("/auth/refresh", refreshLimiter, AuthController.refreshToken);
 router.post("/auth/logout", authLimiter, AuthController.logout);
 router.post("/auth/logout-all", authenticateToken, AuthController.logoutAllDevices);
@@ -605,6 +606,27 @@ router.post("/subscriptions/gift", optionalAuthenticateToken, MonetizationContro
 router.post("/subscriptions/gift/redeem", authenticateToken, MonetizationController.redeemGiftPass);
 router.get("/subscriptions/gifts/my", authenticateToken, MonetizationController.getMyGifts);
 router.get("/ads/marketplace", AdController.getMarketplace);
+
+// --- CONFIGURATION DYNAMIQUE APPLICATION MOBILE (Server-Driven Remote Config) ---
+router.get("/app/config", (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      maintenanceMode: false,
+      maintenanceMessage: null,
+      minSupportedVersion: "1.0.0",
+      features: {
+        studioBooking: true,
+        creatorTips: true,
+        sponsoring: true,
+        giftPasses: true,
+        showSuggestions: true,
+        offlineDownloads: true,
+      },
+      promoBanner: null,
+    },
+  });
+});
 
 // --- SHOW SUGGESTIONS (PROPOSER UNE ÉMISSION) ---
 router.post("/discovery/suggestions", optionalAuthenticateToken, ShowSuggestionController.submitSuggestion);

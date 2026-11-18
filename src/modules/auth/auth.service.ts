@@ -697,30 +697,53 @@ export class AuthService {
     return { message: "Déconnexion de tous les appareils réussie" };
   }
 
-  static async loginWithGoogle(params: {
-    idToken: string;
+  private static appleKeysCache: {
+    keys: Array<Record<string, unknown> & { kid?: string; alg?: string }>;
+    expiresAt: number;
+  } | null = null;
+
+  private static async getApplePublicKeys(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && AuthService.appleKeysCache && AuthService.appleKeysCache.expiresAt > now) {
+      return AuthService.appleKeysCache.keys;
+    }
+
+    const res = await fetch("https://appleid.apple.com/auth/keys", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`APPLE_JWKS_FETCH_FAILED (${res.status})`);
+    }
+
+    const data = (await res.json()) as {
+      keys?: Array<Record<string, unknown> & { kid?: string; alg?: string }>;
+    };
+    const keys = Array.isArray(data?.keys) ? data.keys : [];
+    if (keys.length === 0) {
+      throw new Error("APPLE_JWKS_EMPTY");
+    }
+
+    AuthService.appleKeysCache = {
+      keys,
+      expiresAt: now + 60 * 60 * 1000,
+    };
+    return keys;
+  }
+
+  private static async completeSocialLogin(params: {
+    email: string;
+    fullName: string;
+    avatar?: string | null;
+    skipWelcomeEmail?: boolean;
     deviceType?: string;
     deviceName?: string;
     ipAddress?: string;
     userAgent?: string;
   }) {
-    const { OAuth2Client } = await import("google-auth-library");
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const client = new OAuth2Client(clientId);
-
-    const ticket = await client.verifyIdToken({
-      idToken: params.idToken,
-      audience: clientId,
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload || !payload.email) {
-      throw new Error("GOOGLE_AUTH_FAILED: Impossible de valider le compte Google");
-    }
-
-    const email = payload.email.trim().toLowerCase();
-    const fullName = payload.name || payload.email.split("@")[0];
-    const avatar = payload.picture || null;
+    const email = params.email.trim().toLowerCase();
+    const fullName = params.fullName.trim() || email.split("@")[0];
+    const avatar = params.avatar || null;
 
     let isNewUser = false;
     let shouldSendWelcome = false;
@@ -743,7 +766,7 @@ export class AuthService {
 
     if (!user) {
       isNewUser = true;
-      shouldSendWelcome = true;
+      shouldSendWelcome = !params.skipWelcomeEmail;
       // Création automatique de l'utilisateur vérifié
       const roleUser = await prisma.role.findUnique({ where: { name: "USER" } });
       user = await prisma.user.create({
@@ -751,7 +774,7 @@ export class AuthService {
           email,
           fullName,
           avatar,
-          isVerified: true, // Google vérifie déjà l'adresse email
+          isVerified: true, // Le fournisseur OAuth certifie déjà l'adresse email
           recommendationProfile: {
             create: {
               onboardingCompleted: false,
@@ -778,8 +801,8 @@ export class AuthService {
         },
       });
     } else if (!user.isVerified) {
-      // Si l'utilisateur existait mais n'était pas encore vérifié, Google certifie son email
-      shouldSendWelcome = user.welcomeEmailSentAt === null;
+      // Si l'utilisateur existait mais n'était pas encore vérifié, le fournisseur OAuth certifie son email
+      shouldSendWelcome = !params.skipWelcomeEmail && user.welcomeEmailSentAt === null;
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -806,17 +829,14 @@ export class AuthService {
     }
 
     const roles = user.userRoles.map((ur) => ur.role.name);
-
     const lifetime = resolveTokenLifetime(params.deviceType);
 
-    // Access Token
     const accessToken = jwt.sign(
       { id: user.id, email: user.email, roles },
       JWT_SECRET,
       { expiresIn: lifetime.accessExpiresIn }
     );
 
-    // Refresh Token
     const rawRefreshToken = crypto.randomBytes(40).toString("hex");
     const tokenHash = hashToken(rawRefreshToken);
     const expiresAt = new Date(Date.now() + lifetime.refreshExpiresInDays * 24 * 60 * 60 * 1000);
@@ -877,6 +897,133 @@ export class AuthService {
       accessToken,
       refreshToken: rawRefreshToken,
     };
+  }
+
+  static async loginWithGoogle(params: {
+    idToken: string;
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const { OAuth2Client } = await import("google-auth-library");
+    const allowedAudiences = [
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_IOS_CLIENT_ID,
+      process.env.GOOGLE_ANDROID_CLIENT_ID,
+    ].filter((id): id is string => Boolean(id && id.trim()));
+
+    const client = new OAuth2Client(allowedAudiences[0]);
+
+    const ticket = await client.verifyIdToken({
+      idToken: params.idToken,
+      audience: allowedAudiences.length > 0 ? allowedAudiences : undefined,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      throw new Error("GOOGLE_AUTH_FAILED: Impossible de valider le compte Google");
+    }
+
+    const email = payload.email.trim().toLowerCase();
+    const fullName = payload.name || email.split("@")[0];
+    const avatar = payload.picture || null;
+
+    return AuthService.completeSocialLogin({
+      email,
+      fullName,
+      avatar,
+      deviceType: params.deviceType,
+      deviceName: params.deviceName,
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
+  }
+
+  static async loginWithApple(params: {
+    identityToken: string;
+    authorizationCode?: string;
+    email?: string | null;
+    fullName?: string | null;
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const decoded = jwt.decode(params.identityToken, { complete: true });
+    if (!decoded || typeof decoded === "string" || !decoded.header?.kid) {
+      throw new Error("APPLE_AUTH_FAILED: Jeton Apple invalide");
+    }
+
+    const { kid } = decoded.header;
+    let keys = await AuthService.getApplePublicKeys(false);
+    let matchingJwk = keys.find((k) => k.kid === kid);
+    if (!matchingJwk) {
+      keys = await AuthService.getApplePublicKeys(true);
+      matchingJwk = keys.find((k) => k.kid === kid);
+    }
+
+    if (!matchingJwk) {
+      throw new Error("APPLE_AUTH_FAILED: Clé publique Apple introuvable");
+    }
+
+    const publicKey = crypto.createPublicKey({
+      key: matchingJwk as crypto.JsonWebKey,
+      format: "jwk",
+    });
+    const publicKeyPem = publicKey.export({ format: "pem", type: "spki" }) as string;
+
+    const allowedAppleAudiences = Array.from(
+      new Set(
+        [
+          process.env.APPLE_BUNDLE_ID || "studio.bamakopodcast.app",
+          process.env.APPLE_CLIENT_ID,
+          process.env.APPLE_SERVICE_ID,
+        ].filter((id): id is string => Boolean(id && id.trim()))
+      )
+    );
+
+    const verifiedPayload = jwt.verify(params.identityToken, publicKeyPem, {
+      algorithms: ["RS256"],
+      issuer: "https://appleid.apple.com",
+      audience:
+        allowedAppleAudiences.length === 1
+          ? allowedAppleAudiences[0]
+          : (allowedAppleAudiences as [string, ...string[]]),
+    }) as jwt.JwtPayload;
+
+    const sub = verifiedPayload.sub;
+    if (!sub) {
+      throw new Error("APPLE_AUTH_FAILED: Identifiant Apple manquant");
+    }
+
+    const verifiedEmail =
+      typeof verifiedPayload.email === "string" && verifiedPayload.email.trim().length > 0
+        ? verifiedPayload.email.trim().toLowerCase()
+        : null;
+    const providedEmail =
+      typeof params.email === "string" && params.email.trim().length > 0
+        ? params.email.trim().toLowerCase()
+        : null;
+
+    const email = verifiedEmail || providedEmail || `apple.${sub}@privaterelay.bamakopodcast.com`;
+    const isSyntheticRelayEmail = email.endsWith("@privaterelay.bamakopodcast.com");
+    const fullName =
+      params.fullName && params.fullName.trim().length > 0
+        ? params.fullName.trim()
+        : isSyntheticRelayEmail
+          ? "Auditeur Bamako"
+          : email.split("@")[0];
+
+    return AuthService.completeSocialLogin({
+      email,
+      fullName,
+      skipWelcomeEmail: isSyntheticRelayEmail,
+      deviceType: params.deviceType,
+      deviceName: params.deviceName,
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
   }
 
   /**

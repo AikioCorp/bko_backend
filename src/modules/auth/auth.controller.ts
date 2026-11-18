@@ -249,6 +249,41 @@ export class AuthController {
     }
   }
 
+  static async appleLogin(req: Request, res: Response) {
+    try {
+      const { identityToken, authorizationCode, email, fullName, deviceType, deviceName } = req.body;
+      if (!identityToken || typeof identityToken !== "string") {
+        return sendError(res, "Jeton Apple (identityToken) requis", "VALIDATION_ERROR", 400);
+      }
+
+      const result = await AuthService.loginWithApple({
+        identityToken,
+        authorizationCode: typeof authorizationCode === "string" ? authorizationCode : undefined,
+        email: typeof email === "string" ? email : null,
+        fullName: typeof fullName === "string" ? fullName : null,
+        deviceType: deviceType || "IOS",
+        deviceName: deviceName || "Application iOS (iPhone)",
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      console.error("[auth] Erreur Apple Login:", error.message);
+      if (error.code === "ACCOUNT_SUSPENDED" || error.message === "ACCOUNT_SUSPENDED") {
+        return sendError(res, error.message || "Ce compte a été suspendu par l'administration", "ACCOUNT_SUSPENDED", 403, error.details);
+      }
+      return sendError(res, error.message || "Échec de l'authentification Apple", "APPLE_AUTH_ERROR", 401);
+    }
+  }
+
   static async requestOtpLogin(req: Request, res: Response) {
     try {
       const identifier = String(req.body?.identifier || req.body?.email || "").trim();
