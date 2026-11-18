@@ -66,6 +66,9 @@ export class StudioBookingController {
       if (error?.code === "SLOT_UNAVAILABLE" || error?.statusCode === 409) {
         return sendError(res, error.message, "SLOT_UNAVAILABLE", 409);
       }
+      if (error?.code === "INVALID_BOOKING_DAY" || error?.statusCode === 400) {
+        return sendError(res, error.message, error?.code || "VALIDATION_ERROR", 400);
+      }
       return sendError(res, error.message || "Erreur lors de l'enregistrement de votre demande Studio");
     }
   }

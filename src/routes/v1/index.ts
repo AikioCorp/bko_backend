@@ -38,7 +38,7 @@ import { AdminConsoleController } from "../../modules/admin/admin-console.contro
 import { AdController } from "../../modules/ads/ad.controller.js";
 import { RecommendationController } from "../../modules/recommendations/recommendation.controller.js";
 import { SubscriptionController } from "../../modules/subscriptions/subscription.controller.js";
-import { requirePermission } from "../../middlewares/permission.middleware.js";
+import { requirePermission, requireAnyPermission } from "../../middlewares/permission.middleware.js";
 import { authenticateToken, optionalAuthenticateToken } from "../../middlewares/auth.middleware.js";
 import rateLimit from "express-rate-limit";
 import { prisma } from "../../config/prisma.js";
@@ -340,6 +340,7 @@ router.post("/admin/reviews/podcasts/:id", authenticateToken, requirePermission(
 router.get("/admin/reports", authenticateToken, requirePermission("moderation.view"), AdminConsoleController.listReports);
 router.patch("/admin/reports/:id", authenticateToken, requirePermission("moderation.edit"), AdminConsoleController.handleReport);
 router.get("/admin/users", authenticateToken, requirePermission("users.view"), AdminConsoleController.listUsers);
+router.post("/admin/users", authenticateToken, requirePermission("users.create"), AdminConsoleController.createUser);
 router.get("/admin/users/:id/360", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
 router.get("/admin/users/:id", authenticateToken, requirePermission("users.view"), AdminConsoleController.getUser360);
 router.put("/admin/users/:id/roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.setUserRoles);
@@ -365,7 +366,7 @@ router.get("/admin/access", authenticateToken, AdminConsoleController.myAccess);
 router.get("/admin/permissions", authenticateToken, requirePermission("roles.view"), AdminConsoleController.permissionsCatalog);
 router.get("/admin/roles", authenticateToken, requirePermission("roles.view"), AdminConsoleController.listRoles);
 router.get("/admin/user-subscription-plans", authenticateToken, requirePermission("users.edit"), AdminConsoleController.listSubscriptionPlans);
-router.get("/admin/assignable-roles", authenticateToken, requirePermission("users.edit"), AdminConsoleController.assignableRoles);
+router.get("/admin/assignable-roles", authenticateToken, requireAnyPermission("users.create", "users.edit"), AdminConsoleController.assignableRoles);
 router.post("/admin/roles", authenticateToken, requirePermission("roles.create"), AdminConsoleController.createRole);
 router.put("/admin/roles/:id", authenticateToken, requirePermission("roles.edit"), AdminConsoleController.updateRole);
 router.delete("/admin/roles/:id", authenticateToken, requirePermission("roles.delete"), AdminConsoleController.deleteRole);

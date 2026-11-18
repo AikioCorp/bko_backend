@@ -42,11 +42,15 @@ const ACTIVE_BOOKING_STATUSES: StudioBookingStatus[] = [
   StudioBookingStatus.CONFIRMED,
 ];
 
+function isFlexibleSlot(slot?: string): boolean {
+  return slot === "FLEXIBLE" || slot === "ACCORD_COMMUN";
+}
+
 function slotsOverlap(a: string, b: string): boolean {
-  if (a === "FLEXIBLE" || b === "FLEXIBLE") return false;
+  if (isFlexibleSlot(a) || isFlexibleSlot(b)) return false;
   if (a === b) return true;
-  if (a === "JOURNEE" && (b === "MATIN" || b === "APRES_MIDI" || b === "SOIREE")) return true;
-  if (b === "JOURNEE" && (a === "MATIN" || a === "APRES_MIDI" || a === "SOIREE")) return true;
+  if (a === "JOURNEE" && (b === "MATIN" || b === "MIDI" || b === "APRES_MIDI")) return true;
+  if (b === "JOURNEE" && (a === "MATIN" || a === "MIDI" || a === "APRES_MIDI")) return true;
   return false;
 }
 
@@ -74,13 +78,13 @@ export class StudioBookingService {
     const rawSlots = existing.map((b) => b.timeSlot).filter((s): s is string => Boolean(s));
     const expanded = new Set<string>();
     for (const slot of rawSlots) {
-      if (slot === "FLEXIBLE") continue;
+      if (isFlexibleSlot(slot)) continue;
       expanded.add(slot);
       if (slot === "JOURNEE") {
         expanded.add("MATIN");
+        expanded.add("MIDI");
         expanded.add("APRES_MIDI");
-        expanded.add("SOIREE");
-      } else if (slot === "MATIN" || slot === "APRES_MIDI" || slot === "SOIREE") {
+      } else if (slot === "MATIN" || slot === "MIDI" || slot === "APRES_MIDI") {
         expanded.add("JOURNEE");
       }
     }
@@ -102,7 +106,7 @@ export class StudioBookingService {
         input.needType === StudioBookingNeed.VIDEO_PODCAST) &&
       cleanDate &&
       cleanSlot &&
-      cleanSlot !== "FLEXIBLE"
+      !isFlexibleSlot(cleanSlot)
     ) {
       const sameDayBookings = await prisma.studioBooking.findMany({
         where: {

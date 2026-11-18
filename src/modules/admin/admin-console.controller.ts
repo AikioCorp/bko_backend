@@ -35,6 +35,12 @@ const KNOWN: Record<string, [number, string]> = {
   JOB_NOT_FOUND: [404, "Tâche introuvable"],
   JOB_NOT_FAILED: [409, "Seules les tâches en échec peuvent être relancées"],
   USER_NOT_FOUND: [404, "Utilisateur introuvable"],
+  EMAIL_ALREADY_EXISTS: [409, "Cette adresse e-mail est déjà utilisée"],
+  PHONE_ALREADY_EXISTS: [409, "Ce numéro de téléphone est déjà utilisé"],
+  USERNAME_ALREADY_EXISTS: [409, "Ce nom d'utilisateur est déjà utilisé"],
+  FULLNAME_REQUIRED: [400, "Le nom complet est requis"],
+  INVALID_EMAIL: [400, "Adresse e-mail invalide"],
+  PASSWORD_TOO_SHORT: [400, "Le mot de passe doit contenir au moins 8 caractères"],
   PLAN_NOT_FOUND: [404, "Formule d'abonnement introuvable"],
   SUBSCRIPTION_NOT_FOUND: [404, "Abonnement introuvable"],
 };
@@ -237,6 +243,25 @@ export class AdminConsoleController {
   static async deleteUser(req: AuthenticatedRequest, res: Response) {
     try {
       return sendSuccess(res, await AdminRbacService.deleteUser(actor(req), idParam(req), req.ip));
+    } catch (e) {
+      return fail(res, e);
+    }
+  }
+
+  static async createUser(req: AuthenticatedRequest, res: Response) {
+    try {
+      const b = z
+        .object({
+          fullName: z.string().min(1).max(100),
+          email: z.string().email().max(254),
+          password: z.string().min(8).max(72),
+          phoneNumber: z.string().max(30).nullable().optional(),
+          username: z.string().min(3).max(40).nullable().optional(),
+          isVerified: z.boolean().optional(),
+          roles: z.array(z.string()).max(10).optional(),
+        })
+        .parse(req.body);
+      return sendSuccess(res, await AdminRbacService.createUser(actor(req), b, req.ip), 201);
     } catch (e) {
       return fail(res, e);
     }

@@ -23,3 +23,20 @@ export const requirePermission = (...required: string[]) => {
     }
   };
 };
+
+/** Exige AU MOINS UNE des permissions listées. */
+export const requireAnyPermission = (...anyOf: string[]) => {
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.user) return sendError(res, "Non authentifié", "UNAUTHORIZED", 401);
+    try {
+      const access = await PermissionService.getAccess(req.user.id);
+      if (!anyOf.some((p) => access.permissions.has(p))) {
+        return sendError(res, "Vous n'avez pas accès à cette fonctionnalité", "FORBIDDEN", 403);
+      }
+      next();
+    } catch (e) {
+      console.error("[permission]", e);
+      return sendError(res, "Une erreur inattendue est survenue.");
+    }
+  };
+};

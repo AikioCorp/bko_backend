@@ -311,6 +311,119 @@ export class AdminRbacService {
     return { userId, deleted: true };
   }
 
+  static async createUser(
+    actor: Actor,
+    data: {
+      fullName: string;
+      email: string;
+      password: string;
+      phoneNumber?: string | null;
+      username?: string | null;
+      isVerified?: boolean;
+      roles?: string[];
+    },
+    ip?: string
+  ) {
+    const access = await PermissionService.getAccess(actor.id);
+
+    const cleanName = data.fullName.trim();
+    if (!cleanName) throw new Error("FULLNAME_REQUIRED");
+
+    const cleanEmail = data.email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) throw new Error("INVALID_EMAIL");
+
+    if (!data.password || data.password.length < 8) {
+      throw new Error("PASSWORD_TOO_SHORT");
+    }
+
+    const existingEmail = await prisma.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+    });
+    if (existingEmail) throw new Error("EMAIL_ALREADY_EXISTS");
+
+    const cleanPhone = data.phoneNumber?.trim() || null;
+    if (cleanPhone) {
+      const existingPhone = await prisma.user.findFirst({ where: { phoneNumber: cleanPhone } });
+      if (existingPhone) throw new Error("PHONE_ALREADY_EXISTS");
+    }
+
+    const cleanUsername = data.username?.trim().toLowerCase() || null;
+    if (cleanUsername) {
+      const existingUsername = await prisma.user.findFirst({
+        where: { username: { equals: cleanUsername, mode: "insensitive" } },
+      });
+      if (existingUsername) throw new Error("USERNAME_ALREADY_EXISTS");
+    }
+
+    const wantedRoles = data.roles?.length
+      ? [...new Set(data.roles.map((r) => r.toUpperCase()))]
+      : ["USER"];
+
+    const roles = await prisma.role.findMany({
+      where: { name: { in: wantedRoles } },
+      include: { rolePermissions: { include: { permission: true } } },
+    });
+    if (roles.length !== wantedRoles.length) throw new Error("UNKNOWN_ROLE");
+
+    if (!access.isSuper) {
+      if (wantedRoles.includes(SUPER_ADMIN_ROLE)) throw new Error("FORBIDDEN");
+      const granted = new Set(roles.flatMap((r) => r.rolePermissions.map((rp) => rp.permission.code)));
+      if (!subset(granted, access.permissions)) throw new Error("PERMISSION_ESCALATION");
+    }
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+    const isVerified = data.isVerified ?? true;
+
+    const created = await prisma.user.create({
+      data: {
+        email: cleanEmail,
+        fullName: cleanName,
+        phoneNumber: cleanPhone,
+        username: cleanUsername,
+        passwordHash,
+        isVerified,
+        userRoles: {
+          create: roles.map((r) => ({ roleId: r.id })),
+        },
+        recommendationProfile: {
+          create: { onboardingCompleted: false },
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        username: true,
+        phoneNumber: true,
+        isVerified: true,
+        isSuspended: true,
+        createdAt: true,
+        userRoles: { include: { role: { select: { name: true } } } },
+      },
+    });
+
+    await AuditService.logAction({
+      actorId: actor.id,
+      action: "USER_CREATED",
+      entityType: "User",
+      entityId: created.id,
+      newState: {
+        email: created.email,
+        fullName: created.fullName,
+        username: created.username,
+        phoneNumber: created.phoneNumber,
+        isVerified: created.isVerified,
+        roles: wantedRoles,
+      },
+      ipAddress: ip,
+    });
+
+    return {
+      ...created,
+      roles: created.userRoles.map((ur) => ur.role.name),
+    };
+  }
+
   static async updateUser(
     actor: Actor,
     userId: string,
