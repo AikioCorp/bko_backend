@@ -169,6 +169,8 @@ router.post("/me/change-password", authenticateToken, UserController.changePassw
 router.get("/me/devices", authenticateToken, UserController.getDevices);
 router.delete("/me/devices", authenticateToken, UserController.revokeAllOtherDevices);
 router.delete("/me/devices/:id", authenticateToken, UserController.revokeDevice);
+router.get("/me/activity", authenticateToken, UserController.getActivitySummary);
+router.post("/me/activity-ping", authenticateToken, UserController.pingActivity);
 router.post("/me/export", authenticateToken, UserController.exportData);
 router.use(supportRouter);
 

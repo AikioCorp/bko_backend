@@ -4,6 +4,7 @@ import { AuditService } from "../../services/audit.service.js";
 import { FeatureFlags } from "../../config/feature-flags.js";
 import { NotificationService } from "../../services/notification.service.js";
 import { PodcastTeamService } from "../creator/podcast-team.service.js";
+import { UserService } from "../users/user.service.js";
 
 export class AdminConsoleService {
   // ───────────────────────── VALIDATION ÉDITORIALE ─────────────────────────
@@ -294,19 +295,118 @@ export class AdminConsoleService {
           createdAt: true,
           userRoles: { select: { role: { select: { name: true } } } },
           creatorProfile: { select: { id: true, slug: true, isVerified: true } },
+          devices: {
+            orderBy: { lastActiveAt: "desc" },
+            take: 1,
+            select: { lastActiveAt: true, deviceType: true, deviceName: true },
+          },
+          sessions: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { createdAt: true, updatedAt: true },
+          },
         },
       }),
       prisma.user.count({ where }),
     ]);
+
+    const userIds = items.map((u) => u.id);
+    const [platformMetricLogs, loginAuditLogs, playbackAggs] =
+      userIds.length > 0
+        ? await Promise.all([
+            prisma.auditLog.findMany({
+              where: {
+                entityType: "USER_METRICS",
+                entityId: { in: userIds },
+                action: "USER_PLATFORM_TIME",
+              },
+              orderBy: { createdAt: "desc" },
+            }),
+            prisma.auditLog.findMany({
+              where: {
+                entityType: "USER",
+                entityId: { in: userIds },
+                action: "USER_LOGIN",
+              },
+              orderBy: { createdAt: "desc" },
+            }),
+            prisma.playbackHistory.groupBy({
+              by: ["userId"],
+              where: { userId: { in: userIds } },
+              _sum: { positionSeconds: true },
+              _max: { lastPlayedAt: true },
+            }),
+          ])
+        : [[], [], []];
+
+    const platformMap = new Map<string, { totalPlatformSeconds: number; lastPingAt: string | null }>();
+    for (const log of platformMetricLogs) {
+      if (!platformMap.has(log.entityId)) {
+        const st =
+          log.newState && typeof log.newState === "object"
+            ? (log.newState as Record<string, any>)
+            : {};
+        platformMap.set(log.entityId, {
+          totalPlatformSeconds: Number(st.totalPlatformSeconds || 0),
+          lastPingAt: typeof st.lastPingAt === "string" ? st.lastPingAt : null,
+        });
+      }
+    }
+
+    const lastLoginMap = new Map<string, string>();
+    for (const log of loginAuditLogs) {
+      if (!lastLoginMap.has(log.entityId)) {
+        lastLoginMap.set(log.entityId, log.createdAt.toISOString());
+      }
+    }
+
+    const playbackMap = new Map<string, { listenSeconds: number; lastPlayedAt: Date | null }>();
+    for (const row of playbackAggs) {
+      playbackMap.set(row.userId, {
+        listenSeconds: row._sum.positionSeconds || 0,
+        lastPlayedAt: row._max.lastPlayedAt || null,
+      });
+    }
+
+    const nowMs = Date.now();
     return {
-      items: items.map(({ userRoles, creatorProfile, ...u }) => ({
-        ...u,
-        isEmailVerified: u.isVerified,
-        isCreatorVerified: Boolean(creatorProfile?.isVerified),
-        hasCreatorProfile: Boolean(creatorProfile),
-        creatorProfile,
-        roles: userRoles.map((ur) => ur.role.name),
-      })),
+      items: items.map(({ userRoles, creatorProfile, devices, sessions, ...u }) => {
+        const metric = platformMap.get(u.id);
+        const playback = playbackMap.get(u.id);
+        const totalListenSeconds = playback?.listenSeconds || 0;
+        const totalPlatformSeconds = Math.max(metric?.totalPlatformSeconds || 0, totalListenSeconds);
+
+        const lastLoginAt =
+          lastLoginMap.get(u.id) || (sessions[0]?.createdAt ? sessions[0].createdAt.toISOString() : null);
+
+        const activityTimes: number[] = [];
+        if (metric?.lastPingAt) {
+          const t = new Date(metric.lastPingAt).getTime();
+          if (!Number.isNaN(t)) activityTimes.push(t);
+        }
+        if (devices[0]?.lastActiveAt) activityTimes.push(devices[0].lastActiveAt.getTime());
+        if (sessions[0]?.updatedAt) activityTimes.push(sessions[0].updatedAt.getTime());
+        if (playback?.lastPlayedAt) activityTimes.push(playback.lastPlayedAt.getTime());
+        if (lastLoginAt) activityTimes.push(new Date(lastLoginAt).getTime());
+
+        const latestActivityMs = activityTimes.length > 0 ? Math.max(...activityTimes) : null;
+        const lastActiveAt = latestActivityMs ? new Date(latestActivityMs).toISOString() : null;
+        const isOnline = latestActivityMs ? nowMs - latestActivityMs <= 5 * 60 * 1000 : false;
+
+        return {
+          ...u,
+          isEmailVerified: u.isVerified,
+          isCreatorVerified: Boolean(creatorProfile?.isVerified),
+          hasCreatorProfile: Boolean(creatorProfile),
+          creatorProfile,
+          roles: userRoles.map((ur) => ur.role.name),
+          lastLoginAt,
+          lastActiveAt,
+          isOnline,
+          totalPlatformSeconds,
+          totalListenSeconds,
+        };
+      }),
       total,
       page: params.page,
       limit: params.limit,
@@ -1018,6 +1118,7 @@ export class AdminConsoleService {
       claimsCount,
       reportsCount,
       auditLogs,
+      activitySummary,
     ] = await Promise.all([
       prisma.playbackHistory.findMany({
         where: { userId },
@@ -1101,6 +1202,7 @@ export class AdminConsoleService {
       prisma.report.count({ where: { reporterId: userId } }),
       prisma.auditLog.findMany({
         where: {
+          action: { notIn: ["USER_PLATFORM_TIME", "USER_LOGIN"] },
           OR: [
             { actorId: userId },
             { entityId: userId },
@@ -1109,6 +1211,7 @@ export class AdminConsoleService {
         orderBy: { createdAt: "desc" },
         take: 20,
       }),
+      UserService.getUserActivitySummary(userId),
     ]);
 
     // Calculs de consommation
@@ -1161,6 +1264,9 @@ export class AdminConsoleService {
         suspendedAt: user.suspendedAt,
         suspendedReason: user.suspendedReason,
         createdAt: user.createdAt,
+        lastLoginAt: activitySummary.lastLoginAt,
+        lastActiveAt: activitySummary.lastActiveAt,
+        isOnline: activitySummary.isOnline,
         roles: user.userRoles.map((ur) => ur.role.name),
         creatorProfile: user.creatorProfile,
         podcastMemberships: user.podcastMemberships,
@@ -1176,6 +1282,8 @@ export class AdminConsoleService {
       analytics: {
         totalListenSeconds,
         totalListenHours: Math.round((totalListenSeconds / 3600) * 10) / 10,
+        totalPlatformSeconds: activitySummary.totalPlatformSeconds,
+        totalPlatformHours: activitySummary.totalPlatformHours,
         totalListensCount,
         completedListensCount,
         completionRate,
@@ -1215,6 +1323,7 @@ export class AdminConsoleService {
       technical: {
         devices: user.devices,
         sessions: user.sessions,
+        loginHistory: activitySummary.loginHistory,
         claimsCount,
         reportsCount,
         auditLogs,
@@ -1351,12 +1460,19 @@ export class AdminConsoleService {
 
     const days = data.durationDays || (plan.interval === "YEARLY" ? 365 : 30);
     const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + days * 24 * 60 * 60 * 1000);
 
     const subscription = await prisma.$transaction(async (tx) => {
+      // Cumuler les jours restants si un abonnement actif n'est pas encore expiré
+      const activeExisting = await tx.userSubscription.findFirst({
+        where: { userId, status: SubscriptionStatus.ACTIVE, currentPeriodEnd: { gt: startDate } },
+        orderBy: { currentPeriodEnd: "desc" },
+      });
+      const baseEnd = activeExisting ? activeExisting.currentPeriodEnd : startDate;
+      const endDate = new Date(baseEnd.getTime() + days * 24 * 60 * 60 * 1000);
+
       await tx.userSubscription.updateMany({
         where: { userId, status: SubscriptionStatus.ACTIVE },
-        data: { status: SubscriptionStatus.CANCELED, canceledAt: new Date() },
+        data: { status: SubscriptionStatus.CANCELED, canceledAt: startDate },
       });
 
       const sub = await tx.userSubscription.create({

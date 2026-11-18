@@ -72,7 +72,10 @@ export class UserService {
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
 
-    const studioAccess = await CreatorProfileService.getStudioAccess(userId);
+    const [studioAccess, activitySummary] = await Promise.all([
+      CreatorProfileService.getStudioAccess(userId),
+      UserService.getUserActivitySummary(userId),
+    ]);
 
     return {
       ...cleanUser,
@@ -86,6 +89,11 @@ export class UserService {
       hasStudioAccess: studioAccess.canAccess,
       isCollaborator: studioAccess.isCollaborator,
       canCreatePodcast: studioAccess.canCreatePodcast,
+      totalPlatformSeconds: activitySummary.totalPlatformSeconds,
+      totalListenSeconds: activitySummary.totalListenSeconds,
+      lastLoginAt: activitySummary.lastLoginAt,
+      lastActiveAt: activitySummary.lastActiveAt,
+      isOnline: activitySummary.isOnline,
     };
   }
 
@@ -447,5 +455,269 @@ export class UserService {
     });
 
     return this.getMe(userId);
+  }
+
+  static async recordActivityPing(
+    userId: string,
+    params: {
+      activeSeconds?: number;
+      deviceType?: string;
+      deviceName?: string;
+      ipAddress?: string;
+    }
+  ) {
+    const delta = Math.max(0, Math.min(120, Math.round(Number(params.activeSeconds) || 60)));
+    const now = new Date();
+    const todayIso = now.toISOString().slice(0, 10);
+
+    // 1. Mettre à jour l'activité récente sur l'appareil le plus récent
+    const latestDevice = await prisma.device.findFirst({
+      where: { userId },
+      orderBy: { lastActiveAt: "desc" },
+      select: { id: true },
+    });
+    if (latestDevice) {
+      await prisma.device.update({
+        where: { id: latestDevice.id },
+        data: { lastActiveAt: now },
+      });
+    }
+
+    // 2. Récupérer ou initialiser la métrique de temps cumulé sur la plateforme
+    const existingMetric = await prisma.auditLog.findFirst({
+      where: {
+        actorId: userId,
+        action: "USER_PLATFORM_TIME",
+        entityType: "USER_METRICS",
+        entityId: userId,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (existingMetric) {
+      const prevState =
+        existingMetric.newState && typeof existingMetric.newState === "object"
+          ? (existingMetric.newState as Record<string, any>)
+          : {};
+      const prevSeconds = Number(prevState.totalPlatformSeconds || 0);
+      const lastPingAt = prevState.lastPingAt ? new Date(prevState.lastPingAt) : null;
+
+      // Anti-spam : si moins de 20s depuis le dernier ping, ne pas doubler le cumul
+      if (lastPingAt && now.getTime() - lastPingAt.getTime() < 20 * 1000) {
+        return {
+          totalPlatformSeconds: prevSeconds,
+          lastActiveAt: now.toISOString(),
+          throttled: true,
+        };
+      }
+
+      const prevDaily =
+        prevState.dailySeconds && typeof prevState.dailySeconds === "object"
+          ? ({ ...prevState.dailySeconds } as Record<string, number>)
+          : {};
+      prevDaily[todayIso] = Number(prevDaily[todayIso] || 0) + delta;
+
+      // Conserver uniquement les 30 derniers jours pour garder un JSON compact
+      const recentDays = Object.keys(prevDaily).sort().slice(-30);
+      const compactedDaily: Record<string, number> = {};
+      for (const d of recentDays) {
+        compactedDaily[d] = prevDaily[d];
+      }
+
+      const nextSeconds = prevSeconds + delta;
+      await prisma.auditLog.update({
+        where: { id: existingMetric.id },
+        data: {
+          ipAddress: params.ipAddress || existingMetric.ipAddress,
+          newState: {
+            totalPlatformSeconds: nextSeconds,
+            lastPingAt: now.toISOString(),
+            lastDeviceType: params.deviceType || prevState.lastDeviceType || "WEB",
+            lastDeviceName: params.deviceName || prevState.lastDeviceName || "Navigateur Web",
+            dailySeconds: compactedDaily,
+          },
+        },
+      });
+
+      return {
+        totalPlatformSeconds: nextSeconds,
+        lastActiveAt: now.toISOString(),
+        throttled: false,
+      };
+    }
+
+    const listenAgg = await prisma.playbackHistory.aggregate({
+      where: { userId },
+      _sum: { positionSeconds: true },
+    });
+    const initialSeconds = (listenAgg._sum.positionSeconds || 0) + delta;
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: userId,
+        action: "USER_PLATFORM_TIME",
+        entityType: "USER_METRICS",
+        entityId: userId,
+        ipAddress: params.ipAddress || null,
+        newState: {
+          totalPlatformSeconds: initialSeconds,
+          lastPingAt: now.toISOString(),
+          lastDeviceType: params.deviceType || "WEB",
+          lastDeviceName: params.deviceName || "Navigateur Web",
+          dailySeconds: { [todayIso]: delta },
+        },
+      },
+    });
+
+    return {
+      totalPlatformSeconds: initialSeconds,
+      lastActiveAt: now.toISOString(),
+      throttled: false,
+    };
+  }
+
+  static async getUserActivitySummary(userId: string) {
+    const [platformMetric, playbackAgg, loginLogs, devices, activeSessions] = await Promise.all([
+      prisma.auditLog.findFirst({
+        where: {
+          actorId: userId,
+          action: "USER_PLATFORM_TIME",
+          entityType: "USER_METRICS",
+          entityId: userId,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.playbackHistory.aggregate({
+        where: { userId },
+        _sum: { positionSeconds: true },
+        _max: { lastPlayedAt: true },
+      }),
+      prisma.auditLog.findMany({
+        where: {
+          entityType: "USER",
+          entityId: userId,
+          action: "USER_LOGIN",
+        },
+        orderBy: { createdAt: "desc" },
+        take: 25,
+      }),
+      prisma.device.findMany({
+        where: { userId },
+        orderBy: { lastActiveAt: "desc" },
+        take: 15,
+      }),
+      prisma.session.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: 15,
+        include: {
+          device: {
+            select: {
+              deviceType: true,
+              deviceName: true,
+              lastActiveAt: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const metricState =
+      platformMetric?.newState && typeof platformMetric.newState === "object"
+        ? (platformMetric.newState as Record<string, any>)
+        : {};
+
+    const totalListenSeconds = playbackAgg._sum.positionSeconds || 0;
+    const trackedPlatformSeconds = Number(metricState.totalPlatformSeconds || 0);
+    const totalPlatformSeconds = Math.max(trackedPlatformSeconds, totalListenSeconds);
+
+    type LoginHistoryEntry = {
+      id: string;
+      createdAt: string;
+      method: string;
+      deviceType: string;
+      deviceName: string;
+      ipAddress: string | null;
+      userAgent: string | null;
+      isActive: boolean;
+    };
+
+    const historyEntries: LoginHistoryEntry[] = [];
+
+    for (const log of loginLogs) {
+      const state =
+        log.newState && typeof log.newState === "object"
+          ? (log.newState as Record<string, any>)
+          : {};
+      const logTime = log.createdAt.getTime();
+      const matchingSession = activeSessions.find(
+        (s) => Math.abs(s.createdAt.getTime() - logTime) <= 60 * 1000 && s.expiresAt > new Date()
+      );
+      historyEntries.push({
+        id: log.id,
+        createdAt: log.createdAt.toISOString(),
+        method: String(state.method || "SESSION"),
+        deviceType: String(state.deviceType || matchingSession?.device?.deviceType || "WEB"),
+        deviceName: String(state.deviceName || matchingSession?.device?.deviceName || "Navigateur Web"),
+        ipAddress: log.ipAddress || matchingSession?.ipAddress || null,
+        userAgent: typeof state.userAgent === "string" ? state.userAgent : matchingSession?.userAgent || null,
+        isActive: Boolean(matchingSession),
+      });
+    }
+
+    // Inclure les sessions existantes antérieures au tracking USER_LOGIN (dédupliquées à 60s près)
+    for (const session of activeSessions) {
+      const sTime = session.createdAt.getTime();
+      const alreadyIncluded = historyEntries.some(
+        (entry) => Math.abs(new Date(entry.createdAt).getTime() - sTime) <= 60 * 1000
+      );
+      if (!alreadyIncluded) {
+        historyEntries.push({
+          id: `session_${session.id}`,
+          createdAt: session.createdAt.toISOString(),
+          method: "SESSION",
+          deviceType: session.device?.deviceType || "WEB",
+          deviceName: session.device?.deviceName || "Session active",
+          ipAddress: session.ipAddress || null,
+          userAgent: session.userAgent || null,
+          isActive: session.expiresAt > new Date(),
+        });
+      }
+    }
+
+    historyEntries.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    const lastLoginAt = historyEntries[0]?.createdAt || null;
+
+    const activityCandidates: number[] = [];
+    if (metricState.lastPingAt) {
+      const t = new Date(metricState.lastPingAt).getTime();
+      if (!Number.isNaN(t)) activityCandidates.push(t);
+    }
+    if (devices[0]?.lastActiveAt) activityCandidates.push(devices[0].lastActiveAt.getTime());
+    if (activeSessions[0]?.updatedAt) activityCandidates.push(activeSessions[0].updatedAt.getTime());
+    if (playbackAgg._max.lastPlayedAt) activityCandidates.push(playbackAgg._max.lastPlayedAt.getTime());
+    if (lastLoginAt) activityCandidates.push(new Date(lastLoginAt).getTime());
+
+    const latestMs = activityCandidates.length > 0 ? Math.max(...activityCandidates) : null;
+    const lastActiveAt = latestMs ? new Date(latestMs).toISOString() : null;
+    const isOnline = latestMs ? Date.now() - latestMs <= 5 * 60 * 1000 : false;
+
+    return {
+      totalPlatformSeconds,
+      totalPlatformHours: Math.round((totalPlatformSeconds / 3600) * 10) / 10,
+      totalListenSeconds,
+      totalListenHours: Math.round((totalListenSeconds / 3600) * 10) / 10,
+      lastLoginAt,
+      lastActiveAt,
+      isOnline,
+      dailySeconds:
+        metricState.dailySeconds && typeof metricState.dailySeconds === "object"
+          ? metricState.dailySeconds
+          : {},
+      loginHistory: historyEntries.slice(0, 25),
+    };
   }
 }

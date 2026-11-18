@@ -157,17 +157,24 @@ export class SubscriptionService {
     // Calculer la durée selon la formule
     const days = plan.interval === "YEARLY" ? 365 : 30;
     const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + days * 24 * 60 * 60 * 1000);
 
     // Générer une référence de transaction unique réaliste (ex: BKO-OM-782912)
     const prefix = data.paymentMethod === "ORANGE_MONEY" ? "OM" : data.paymentMethod === "WAVE" ? "WAVE" : data.paymentMethod === "MOOV_MONEY" ? "MOOV" : "CB";
     const transactionRef = `BKO-${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
 
     const result = await prisma.$transaction(async (tx) => {
+      // Cumuler les jours restants si un abonnement actif n'est pas encore expiré
+      const activeExisting = await tx.userSubscription.findFirst({
+        where: { userId, status: SubscriptionStatus.ACTIVE, currentPeriodEnd: { gt: startDate } },
+        orderBy: { currentPeriodEnd: "desc" },
+      });
+      const baseEnd = activeExisting ? activeExisting.currentPeriodEnd : startDate;
+      const endDate = new Date(baseEnd.getTime() + days * 24 * 60 * 60 * 1000);
+
       // 1. Désactiver les anciens abonnements actifs s'il y en avait
       await tx.userSubscription.updateMany({
         where: { userId, status: SubscriptionStatus.ACTIVE },
-        data: { status: SubscriptionStatus.CANCELED, canceledAt: new Date() },
+        data: { status: SubscriptionStatus.CANCELED, canceledAt: startDate },
       });
 
       // 2. Créer le nouvel abonnement
@@ -203,7 +210,7 @@ export class SubscriptionService {
         data: {
           userId,
           title: "🎉 Bienvenue dans Bamako Podcast Premium !",
-          body: `Votre formule « ${plan.name} » est désormais active jusqu'au ${endDate.toLocaleDateString("fr-FR")}. Vous bénéficiez de l'écoute illimitée sans coupure publicitaire et de tout le catalogue exclusif.`,
+          body: `Votre formule « ${plan.name} » est désormais active jusqu'au ${result.subscription.currentPeriodEnd.toLocaleDateString("fr-FR")}. Vous bénéficiez de l'écoute illimitée sans coupure publicitaire et de tout le catalogue exclusif.`,
           link: "/premium",
           type: "SUBSCRIPTION_ACTIVATED",
         },

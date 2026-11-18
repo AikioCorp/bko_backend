@@ -133,4 +133,30 @@ export class UserController {
       return sendError(res, error.message, "VALIDATION_ERROR", 400);
     }
   }
+
+  static async pingActivity(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const { activeSeconds, deviceType, deviceName } = req.body || {};
+      const result = await UserService.recordActivityPing(req.user.id, {
+        activeSeconds: activeSeconds !== undefined ? Number(activeSeconds) : 60,
+        deviceType: typeof deviceType === "string" ? deviceType : undefined,
+        deviceName: typeof deviceName === "string" ? deviceName : undefined,
+        ipAddress: req.ip,
+      });
+      return sendSuccess(res, result);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur de suivi d'activité.");
+    }
+  }
+
+  static async getActivitySummary(req: AuthenticatedRequest, res: Response) {
+    try {
+      if (!req.user) return sendError(res, "Non autorisé", "UNAUTHORIZED", 401);
+      const summary = await UserService.getUserActivitySummary(req.user.id);
+      return sendSuccess(res, summary);
+    } catch (error: any) {
+      return sendError(res, error.message || "Erreur lors de la récupération de l'activité.");
+    }
+  }
 }

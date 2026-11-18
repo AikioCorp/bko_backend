@@ -443,6 +443,15 @@ export class AuthService {
       }),
     ]);
 
+    void AuthService.recordLoginEvent({
+      userId: user.id,
+      method: "OTP",
+      deviceType: params.deviceType || "MOBILE",
+      deviceName: params.deviceName || "Appareil Mobile",
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
+
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
     const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
@@ -572,6 +581,15 @@ export class AuthService {
         },
       }),
     ]);
+
+    void AuthService.recordLoginEvent({
+      userId: user.id,
+      method: "PASSWORD",
+      deviceType: params.deviceType || "WEB",
+      deviceName: params.deviceName || "Appareil Navigateur",
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
 
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
@@ -731,10 +749,40 @@ export class AuthService {
     return keys;
   }
 
+  private static async recordLoginEvent(params: {
+    userId: string;
+    method: "PASSWORD" | "OTP" | "GOOGLE" | "APPLE";
+    deviceType?: string;
+    deviceName?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    try {
+      await prisma.auditLog.create({
+        data: {
+          actorId: params.userId,
+          action: "USER_LOGIN",
+          entityType: "USER",
+          entityId: params.userId,
+          ipAddress: params.ipAddress || null,
+          newState: {
+            method: params.method,
+            deviceType: params.deviceType || "WEB",
+            deviceName: params.deviceName || "Navigateur Web",
+            userAgent: params.userAgent || null,
+          },
+        },
+      });
+    } catch (err) {
+      console.warn("[auth] Impossible d'enregistrer USER_LOGIN:", err);
+    }
+  }
+
   private static async completeSocialLogin(params: {
     email: string;
     fullName: string;
     avatar?: string | null;
+    provider?: "GOOGLE" | "APPLE";
     skipWelcomeEmail?: boolean;
     deviceType?: string;
     deviceName?: string;
@@ -873,6 +921,15 @@ export class AuthService {
       }),
     ]);
 
+    void AuthService.recordLoginEvent({
+      userId: user.id,
+      method: params.provider || "GOOGLE",
+      deviceType: params.deviceType || "WEB",
+      deviceName: params.deviceName || "Navigateur Web",
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
+
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
     const hasPreferences = (user.languagePreferences?.length || 0) > 0 && (user.topicPreferences?.length || 0) > 0;
@@ -933,6 +990,7 @@ export class AuthService {
       email,
       fullName,
       avatar,
+      provider: "GOOGLE",
       deviceType: params.deviceType,
       deviceName: params.deviceName,
       ipAddress: params.ipAddress,
@@ -1018,6 +1076,7 @@ export class AuthService {
     return AuthService.completeSocialLogin({
       email,
       fullName,
+      provider: "APPLE",
       skipWelcomeEmail: isSyntheticRelayEmail,
       deviceType: params.deviceType,
       deviceName: params.deviceName,
@@ -1205,6 +1264,15 @@ export class AuthService {
         },
       }),
     ]);
+
+    void AuthService.recordLoginEvent({
+      userId: user.id,
+      method: "OTP",
+      deviceType: params.deviceType || "WEB",
+      deviceName: params.deviceName || "Navigateur Web",
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
 
     const onboardingCompleted = Boolean(user.recommendationProfile?.onboardingCompleted);
     const onboardingState = user.recommendationProfile?.onboardingState ?? (onboardingCompleted ? "COMPLETED" : "NOT_PROMPTED");
