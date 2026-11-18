@@ -94,6 +94,8 @@ export class UserService {
       lastLoginAt: activitySummary.lastLoginAt,
       lastActiveAt: activitySummary.lastActiveAt,
       isOnline: activitySummary.isOnline,
+      lastDeviceType: activitySummary.lastDeviceType,
+      lastDeviceName: activitySummary.lastDeviceName,
     };
   }
 
@@ -576,6 +578,112 @@ export class UserService {
     };
   }
 
+  static normalizePlatformType(
+    rawType?: string | null,
+    rawName?: string | null,
+    userAgent?: string | null
+  ): "IOS" | "ANDROID" | "WEB" {
+    const explicit = String(rawType || "").trim().toUpperCase();
+    if (explicit === "IOS" || explicit.includes("IPHONE") || explicit.includes("IPAD")) {
+      return "IOS";
+    }
+    if (explicit === "ANDROID") {
+      return "ANDROID";
+    }
+    if (explicit === "WEB") {
+      return "WEB";
+    }
+
+    const fallback = `${rawName || ""} ${userAgent || ""}`.toLowerCase();
+    if (
+      fallback.includes("ios") ||
+      fallback.includes("iphone") ||
+      fallback.includes("ipad") ||
+      fallback.includes("cfnetwork") ||
+      fallback.includes("darwin")
+    ) {
+      return "IOS";
+    }
+    if (
+      fallback.includes("android") ||
+      fallback.includes("dalvik") ||
+      fallback.includes("okhttp")
+    ) {
+      return "ANDROID";
+    }
+    return "WEB";
+  }
+
+  static resolveLatestPlatform(params: {
+    pingAt?: string | null;
+    pingDeviceType?: string | null;
+    pingDeviceName?: string | null;
+    loginAt?: string | null;
+    loginDeviceType?: string | null;
+    loginDeviceName?: string | null;
+    loginUserAgent?: string | null;
+    deviceAt?: Date | string | null;
+    deviceType?: string | null;
+    deviceName?: string | null;
+  }): { lastDeviceType: "IOS" | "ANDROID" | "WEB" | null; lastDeviceName: string | null } {
+    const candidates: Array<{
+      ts: number;
+      type: "IOS" | "ANDROID" | "WEB";
+      name: string | null;
+    }> = [];
+
+    const toMs = (val?: Date | string | null): number => {
+      if (!val) return 0;
+      const ms = val instanceof Date ? val.getTime() : new Date(val).getTime();
+      return Number.isNaN(ms) ? 0 : ms;
+    };
+
+    const pingMs = toMs(params.pingAt);
+    if (pingMs > 0 && (params.pingDeviceType || params.pingDeviceName)) {
+      candidates.push({
+        ts: pingMs,
+        type: UserService.normalizePlatformType(
+          params.pingDeviceType,
+          params.pingDeviceName,
+          null
+        ),
+        name: params.pingDeviceName || null,
+      });
+    }
+
+    const loginMs = toMs(params.loginAt);
+    if (loginMs > 0) {
+      candidates.push({
+        ts: loginMs,
+        type: UserService.normalizePlatformType(
+          params.loginDeviceType,
+          params.loginDeviceName,
+          params.loginUserAgent
+        ),
+        name: params.loginDeviceName || null,
+      });
+    }
+
+    const deviceMs = toMs(params.deviceAt);
+    if (deviceMs > 0 && (params.deviceType || params.deviceName)) {
+      candidates.push({
+        ts: deviceMs,
+        type: UserService.normalizePlatformType(params.deviceType, params.deviceName, null),
+        name: params.deviceName || null,
+      });
+    }
+
+    if (candidates.length === 0) {
+      return { lastDeviceType: null, lastDeviceName: null };
+    }
+    candidates.sort((a, b) => b.ts - a.ts);
+    const best = candidates[0];
+    return {
+      lastDeviceType: best.type,
+      lastDeviceName: best.name,
+    };
+  }
+
   static async getUserActivitySummary(userId: string) {
     const [platformMetric, playbackAgg, loginLogs, devices, activeSessions] = await Promise.all([
       prisma.auditLog.findFirst({
@@ -653,14 +761,25 @@ export class UserService {
       const matchingSession = activeSessions.find(
         (s) => Math.abs(s.createdAt.getTime() - logTime) <= 60 * 1000 && s.expiresAt > new Date()
       );
+      const logUserAgent =
+        typeof state.userAgent === "string"
+          ? state.userAgent
+          : matchingSession?.userAgent || null;
+      const logDeviceName = String(
+        state.deviceName || matchingSession?.device?.deviceName || "Navigateur Web"
+      );
       historyEntries.push({
         id: log.id,
         createdAt: log.createdAt.toISOString(),
         method: String(state.method || "SESSION"),
-        deviceType: String(state.deviceType || matchingSession?.device?.deviceType || "WEB"),
-        deviceName: String(state.deviceName || matchingSession?.device?.deviceName || "Navigateur Web"),
+        deviceType: UserService.normalizePlatformType(
+          state.deviceType || matchingSession?.device?.deviceType,
+          logDeviceName,
+          logUserAgent
+        ),
+        deviceName: logDeviceName,
         ipAddress: log.ipAddress || matchingSession?.ipAddress || null,
-        userAgent: typeof state.userAgent === "string" ? state.userAgent : matchingSession?.userAgent || null,
+        userAgent: logUserAgent,
         isActive: Boolean(matchingSession),
       });
     }
@@ -672,12 +791,17 @@ export class UserService {
         (entry) => Math.abs(new Date(entry.createdAt).getTime() - sTime) <= 60 * 1000
       );
       if (!alreadyIncluded) {
+        const sessionDeviceName = session.device?.deviceName || "Session active";
         historyEntries.push({
           id: `session_${session.id}`,
           createdAt: session.createdAt.toISOString(),
           method: "SESSION",
-          deviceType: session.device?.deviceType || "WEB",
-          deviceName: session.device?.deviceName || "Session active",
+          deviceType: UserService.normalizePlatformType(
+            session.device?.deviceType,
+            sessionDeviceName,
+            session.userAgent
+          ),
+          deviceName: sessionDeviceName,
           ipAddress: session.ipAddress || null,
           userAgent: session.userAgent || null,
           isActive: session.expiresAt > new Date(),
@@ -705,6 +829,21 @@ export class UserService {
     const lastActiveAt = latestMs ? new Date(latestMs).toISOString() : null;
     const isOnline = latestMs ? Date.now() - latestMs <= 5 * 60 * 1000 : false;
 
+    const latestPlatform = UserService.resolveLatestPlatform({
+      pingAt: typeof metricState.lastPingAt === "string" ? metricState.lastPingAt : null,
+      pingDeviceType:
+        typeof metricState.lastDeviceType === "string" ? metricState.lastDeviceType : null,
+      pingDeviceName:
+        typeof metricState.lastDeviceName === "string" ? metricState.lastDeviceName : null,
+      loginAt: historyEntries[0]?.createdAt || null,
+      loginDeviceType: historyEntries[0]?.deviceType || null,
+      loginDeviceName: historyEntries[0]?.deviceName || null,
+      loginUserAgent: historyEntries[0]?.userAgent || null,
+      deviceAt: devices[0]?.lastActiveAt || null,
+      deviceType: devices[0]?.deviceType || null,
+      deviceName: devices[0]?.deviceName || null,
+    });
+
     return {
       totalPlatformSeconds,
       totalPlatformHours: Math.round((totalPlatformSeconds / 3600) * 10) / 10,
@@ -713,6 +852,8 @@ export class UserService {
       lastLoginAt,
       lastActiveAt,
       isOnline,
+      lastDeviceType: latestPlatform.lastDeviceType,
+      lastDeviceName: latestPlatform.lastDeviceName,
       dailySeconds:
         metricState.dailySeconds && typeof metricState.dailySeconds === "object"
           ? metricState.dailySeconds

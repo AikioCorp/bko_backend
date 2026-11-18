@@ -339,7 +339,15 @@ export class AdminConsoleService {
           ])
         : [[], [], []];
 
-    const platformMap = new Map<string, { totalPlatformSeconds: number; lastPingAt: string | null }>();
+    const platformMap = new Map<
+      string,
+      {
+        totalPlatformSeconds: number;
+        lastPingAt: string | null;
+        lastDeviceType: string | null;
+        lastDeviceName: string | null;
+      }
+    >();
     for (const log of platformMetricLogs) {
       if (!platformMap.has(log.entityId)) {
         const st =
@@ -349,14 +357,33 @@ export class AdminConsoleService {
         platformMap.set(log.entityId, {
           totalPlatformSeconds: Number(st.totalPlatformSeconds || 0),
           lastPingAt: typeof st.lastPingAt === "string" ? st.lastPingAt : null,
+          lastDeviceType: typeof st.lastDeviceType === "string" ? st.lastDeviceType : null,
+          lastDeviceName: typeof st.lastDeviceName === "string" ? st.lastDeviceName : null,
         });
       }
     }
 
-    const lastLoginMap = new Map<string, string>();
+    const lastLoginMap = new Map<
+      string,
+      {
+        createdAt: string;
+        deviceType: string | null;
+        deviceName: string | null;
+        userAgent: string | null;
+      }
+    >();
     for (const log of loginAuditLogs) {
       if (!lastLoginMap.has(log.entityId)) {
-        lastLoginMap.set(log.entityId, log.createdAt.toISOString());
+        const st =
+          log.newState && typeof log.newState === "object"
+            ? (log.newState as Record<string, any>)
+            : {};
+        lastLoginMap.set(log.entityId, {
+          createdAt: log.createdAt.toISOString(),
+          deviceType: typeof st.deviceType === "string" ? st.deviceType : null,
+          deviceName: typeof st.deviceName === "string" ? st.deviceName : null,
+          userAgent: typeof st.userAgent === "string" ? st.userAgent : null,
+        });
       }
     }
 
@@ -372,12 +399,13 @@ export class AdminConsoleService {
     return {
       items: items.map(({ userRoles, creatorProfile, devices, sessions, ...u }) => {
         const metric = platformMap.get(u.id);
+        const lastLoginEntry = lastLoginMap.get(u.id);
         const playback = playbackMap.get(u.id);
         const totalListenSeconds = playback?.listenSeconds || 0;
         const totalPlatformSeconds = Math.max(metric?.totalPlatformSeconds || 0, totalListenSeconds);
 
         const lastLoginAt =
-          lastLoginMap.get(u.id) || (sessions[0]?.createdAt ? sessions[0].createdAt.toISOString() : null);
+          lastLoginEntry?.createdAt || (sessions[0]?.createdAt ? sessions[0].createdAt.toISOString() : null);
 
         const activityTimes: number[] = [];
         if (metric?.lastPingAt) {
@@ -393,6 +421,19 @@ export class AdminConsoleService {
         const lastActiveAt = latestActivityMs ? new Date(latestActivityMs).toISOString() : null;
         const isOnline = latestActivityMs ? nowMs - latestActivityMs <= 5 * 60 * 1000 : false;
 
+        const platform = UserService.resolveLatestPlatform({
+          pingAt: metric?.lastPingAt,
+          pingDeviceType: metric?.lastDeviceType,
+          pingDeviceName: metric?.lastDeviceName,
+          loginAt: lastLoginEntry?.createdAt,
+          loginDeviceType: lastLoginEntry?.deviceType,
+          loginDeviceName: lastLoginEntry?.deviceName,
+          loginUserAgent: lastLoginEntry?.userAgent,
+          deviceAt: devices[0]?.lastActiveAt,
+          deviceType: devices[0]?.deviceType,
+          deviceName: devices[0]?.deviceName,
+        });
+
         return {
           ...u,
           isEmailVerified: u.isVerified,
@@ -403,6 +444,8 @@ export class AdminConsoleService {
           lastLoginAt,
           lastActiveAt,
           isOnline,
+          lastDeviceType: platform.lastDeviceType,
+          lastDeviceName: platform.lastDeviceName,
           totalPlatformSeconds,
           totalListenSeconds,
         };
@@ -1267,6 +1310,8 @@ export class AdminConsoleService {
         lastLoginAt: activitySummary.lastLoginAt,
         lastActiveAt: activitySummary.lastActiveAt,
         isOnline: activitySummary.isOnline,
+        lastDeviceType: activitySummary.lastDeviceType,
+        lastDeviceName: activitySummary.lastDeviceName,
         roles: user.userRoles.map((ur) => ur.role.name),
         creatorProfile: user.creatorProfile,
         podcastMemberships: user.podcastMemberships,
